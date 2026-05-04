@@ -14,33 +14,34 @@ public sealed class ScanScheduler : BackgroundService
 {
     private readonly IServiceProvider _services;
     private readonly IEnumerable<IFeedSource> _sources;
-    private readonly HarvesterOptions _opts;
+    private readonly ISettingsService _settings;
     private readonly ILogger<ScanScheduler> _log;
     private readonly ScanTrigger _trigger;
 
     public ScanScheduler(IServiceProvider services,
                          IEnumerable<IFeedSource> sources,
-                         IOptions<HarvesterOptions> opts,
+                         ISettingsService settings,
                          ScanTrigger trigger,
                          ILogger<ScanScheduler> log)
     {
         _services = services;
         _sources = sources;
-        _opts = opts.Value;
+        _settings = settings;
         _log = log;
         _trigger = trigger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (_opts.ScanOnStartup)
+        if (_settings.Current.ScanOnStartup)
         {
             _trigger.RequestScan();
         }
 
-        var interval = TimeSpan.FromMinutes(_opts.ScanIntervalMinutes);
         while (!stoppingToken.IsCancellationRequested)
         {
+            var minutes = Math.Max(1, _settings.Current.ScanIntervalMinutes);
+            var interval = TimeSpan.FromMinutes(minutes);
             try
             {
                 await _trigger.WaitOrIntervalAsync(interval, stoppingToken);

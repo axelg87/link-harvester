@@ -17,22 +17,19 @@ public sealed class SubmissionService
     private readonly IDbContextFactory<HarvesterDbContext> _factory;
     private readonly ILinkResolver _resolver;
     private readonly IDownloadStationClient _dsm;
-    private readonly Synology.SynologyOptions _dsmOptions;
-    private readonly HarvesterOptions _opts;
+    private readonly ISettingsService _settings;
     private readonly ILogger<SubmissionService> _log;
 
     public SubmissionService(IDbContextFactory<HarvesterDbContext> factory,
                               ILinkResolver resolver,
                               IDownloadStationClient dsm,
-                              IOptions<Synology.SynologyOptions> dsmOptions,
-                              IOptions<HarvesterOptions> opts,
+                              ISettingsService settings,
                               ILogger<SubmissionService> log)
     {
         _factory = factory;
         _resolver = resolver;
         _dsm = dsm;
-        _dsmOptions = dsmOptions.Value;
-        _opts = opts.Value;
+        _settings = settings;
         _log = log;
     }
 
@@ -113,8 +110,8 @@ public sealed class SubmissionService
             .FirstAsync(a => a.Id == articleId, ct);
 
         var dest = article.Title.Kind == TitleKind.Movie
-            ? _dsmOptions.DefaultMovieDestination
-            : _dsmOptions.DefaultSeriesDestination;
+            ? _settings.Current.SynologyMovieDestination
+            : _settings.Current.SynologySeriesDestination;
 
         var urls = resolved.Select(r => r.Url).ToList();
         var submission = new SubmissionEntity
@@ -177,13 +174,22 @@ public sealed class SubmissionService
 
     private List<HosterLinks> OrderByPriority(List<HosterLinks> hosters)
     {
-        var priority = _opts.HosterPriority;
+        var priority = _settings.Current.HosterPriority;
         return hosters
             .OrderBy(h =>
             {
-                var idx = priority.FindIndex(p =>
-                    string.Equals(p, h.Hoster, StringComparison.OrdinalIgnoreCase));
+                int idx = -1;
+                for (int i = 0; i < priority.Count; i++)
+                {
+                    if (string.Equals(priority[i], h.Hoster, StringComparison.OrdinalIgnoreCase))
+                    { idx = i; break; }
+                }
                 return idx < 0 ? int.MaxValue : idx;
+            })
+            .Where(h =>
+            {
+                if (priority.Count == 0) return true;
+                return priority.Any(p => string.Equals(p, h.Hoster, StringComparison.OrdinalIgnoreCase));
             })
             .ToList();
     }

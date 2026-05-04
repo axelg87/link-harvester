@@ -58,4 +58,22 @@ public sealed class HarvesterApi
     {
         return (await _http.GetFromJsonAsync<BudgetSnapshot>("api/budget", ct))!;
     }
+
+    public async Task<Settings> GetSettingsAsync(CancellationToken ct = default)
+    {
+        return (await _http.GetFromJsonAsync<Settings>("api/settings", ct))!;
+    }
+
+    public async Task SaveSettingsAsync(UpdateSettings update, CancellationToken ct = default)
+    {
+        using var resp = await _http.PutAsJsonAsync("api/settings", update, ct);
+        resp.EnsureSuccessStatusCode();
+    }
+
+    public async Task<SynologyTestResult> TestSynologyAsync(CancellationToken ct = default)
+    {
+        using var resp = await _http.PostAsync("api/settings/test-synology", null, ct);
+        resp.EnsureSuccessStatusCode();
+        return (await resp.Content.ReadFromJsonAsync<SynologyTestResult>(cancellationToken: ct))!;
+    }
 }

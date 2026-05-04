@@ -3,7 +3,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using LinkHarvester.Core;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace LinkHarvester.Synology;
 
@@ -16,30 +15,37 @@ namespace LinkHarvester.Synology;
 public sealed class DownloadStationClient : IDownloadStationClient
 {
     private readonly HttpClient _http;
-    private readonly SynologyOptions _opts;
+    private readonly ISettingsService _settings;
     private readonly ILogger<DownloadStationClient> _log;
     private readonly SemaphoreSlim _sessionGate = new(1, 1);
     private string? _sid;
     private DateTimeOffset _sidObtainedAt;
+    private string? _sidForBaseUrl;
 
-    public DownloadStationClient(HttpClient http, IOptions<SynologyOptions> opts, ILogger<DownloadStationClient> log)
+    public DownloadStationClient(HttpClient http, ISettingsService settings, ILogger<DownloadStationClient> log)
     {
         _http = http;
-        _opts = opts.Value;
+        _settings = settings;
         _log = log;
-        _http.Timeout = TimeSpan.FromSeconds(_opts.RequestTimeoutSeconds);
+        _http.Timeout = TimeSpan.FromSeconds(30);
+        _settings.Changed += () => { _sid = null; }; // force re-auth on settings change
     }
 
     public async Task<IReadOnlyList<string>> CreateTasksAsync(IEnumerable<string> urls, string? destination, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(_opts.BaseUrl))
+        var s = _settings.Current;
+        if (string.IsNullOrWhiteSpace(s.SynologyBaseUrl))
             throw new InvalidOperationException("Synology BaseUrl is not configured.");
+        if (string.IsNullOrWhiteSpace(s.SynologyUsername) || string.IsNullOrWhiteSpace(s.SynologyPassword))
+            throw new InvalidOperationException("Synology credentials are not configured.");
         var urlList = urls.Where(u => !string.IsNullOrWhiteSpace(u)).Distinct().ToList();
-        if (urlList.Count == 0) return Array.Empty<string>();
 
         await EnsureSessionAsync(ct);
 
-        var endpoint = new Uri(new Uri(_opts.BaseUrl), "/webapi/entry.cgi");
+        // Empty-list call is used by the settings UI as a connection test.
+        if (urlList.Count == 0) return Array.Empty<string>();
+
+        var endpoint = new Uri(new Uri(s.SynologyBaseUrl), "/webapi/entry.cgi");
         var form = new Dictionary<string, string>
         {
             ["api"] = "SYNO.DownloadStation2.Task",
@@ -80,25 +86,28 @@ public sealed class DownloadStationClient : IDownloadStationClient
 
     private async Task EnsureSessionAsync(CancellationToken ct)
     {
-        if (_sid is not null && DateTimeOffset.UtcNow - _sidObtainedAt < TimeSpan.FromMinutes(30)) return;
+        var s = _settings.Current;
+        if (_sid is not null && _sidForBaseUrl == s.SynologyBaseUrl
+            && DateTimeOffset.UtcNow - _sidObtainedAt < TimeSpan.FromMinutes(30)) return;
         await _sessionGate.WaitAsync(ct);
         try
         {
-            if (_sid is not null && DateTimeOffset.UtcNow - _sidObtainedAt < TimeSpan.FromMinutes(30)) return;
+            if (_sid is not null && _sidForBaseUrl == s.SynologyBaseUrl
+                && DateTimeOffset.UtcNow - _sidObtainedAt < TimeSpan.FromMinutes(30)) return;
 
-            var endpoint = new Uri(new Uri(_opts.BaseUrl), "/webapi/entry.cgi");
+            var endpoint = new Uri(new Uri(s.SynologyBaseUrl), "/webapi/entry.cgi");
             var form = new Dictionary<string, string>
             {
                 ["api"] = "SYNO.API.Auth",
                 ["version"] = "6",
                 ["method"] = "login",
-                ["account"] = _opts.Username,
-                ["passwd"] = _opts.Password,
+                ["account"] = s.SynologyUsername,
+                ["passwd"] = s.SynologyPassword,
                 ["session"] = "DownloadStation",
                 ["format"] = "sid"
             };
-            if (!string.IsNullOrWhiteSpace(_opts.OtpCode))
-                form["otp_code"] = _opts.OtpCode!;
+            if (!string.IsNullOrWhiteSpace(s.SynologyOtpCode))
+                form["otp_code"] = s.SynologyOtpCode!;
 
             using var content = new FormUrlEncodedContent(form);
             using var resp = await _http.PostAsync(endpoint, content, ct);
@@ -110,6 +119,7 @@ public sealed class DownloadStationClient : IDownloadStationClient
 
             _sid = env.Data.Sid;
             _sidObtainedAt = DateTimeOffset.UtcNow;
+            _sidForBaseUrl = s.SynologyBaseUrl;
             _log.LogInformation("Synology login succeeded.");
         }
         finally { _sessionGate.Release(); }

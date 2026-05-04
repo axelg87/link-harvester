@@ -1,46 +1,46 @@
-using System.Text.RegularExpressions;
+using AngleSharp.Html.Dom;
+using AngleSharp.Html.Parser;
 using LinkHarvester.Core;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Microsoft.Playwright;
 
 namespace LinkHarvester.Resolution;
 
 /// <summary>
-/// Resolves a single dl-protect.link URL into the final hoster URL using Playwright.
-/// Strategy:
-///   1. Open the page in a persistent Chromium context.
-///   2. Wait for the page to settle. Turnstile typically self-solves invisibly.
-///   3. Click any visible "Continuer" / "Continue" button if present.
-///   4. After the protected content is revealed, capture either:
-///        - the first hoster anchor on the page, OR
-///        - a known redirect target.
-///   5. If a Turnstile widget is detected and not auto-solved within a timeout,
-///      defer to CapSolver (if configured + budget available).
+/// Resolves a single dl-protect.link URL into the final hoster URL.
+///
+/// dl-protect's flow is, in practice (verified empirically):
+///   1. GET the page  -> server sets PHPSESSID cookie, page shows a Cloudflare
+///      Turnstile widget and a disabled "Continuer" submit button.
+///   2. POST to the same URL with `subform=unlock`. As long as we send a
+///      session cookie, the response body contains the final hoster URL inside
+///      &lt;a class="dest-url" href="..."&gt; and &lt;a class="btn-proceed" href="..."&gt;.
+///      The Turnstile token is NOT validated server-side at the moment;
+///      sending an empty / arbitrary `cf-turnstile-response` is accepted.
+///
+/// If dl-protect ever starts enforcing the Turnstile token, the
+/// CapSolver fallback is wired in but normally unused.
 /// </summary>
 public sealed class DlProtectResolver : ILinkResolver
 {
-    private static readonly Regex TurnstileSiteKeyRegex =
-        new(@"data-sitekey=[""'](?<k>[a-zA-Z0-9_\-]+)[""']", RegexOptions.Compiled);
-
     private static readonly string[] FinalHosterDomainHints =
     {
-        "1fichier.com", "rapidgator.net", "uploady.io", "dailyuploads.net", "nitroflare.com"
+        "1fichier.com", "rapidgator.net", "uploady.io", "dailyuploads.net", "nitroflare.com", "turbobit.net"
     };
 
-    private readonly PlaywrightInstaller _installer;
+    private readonly IHttpClientFactory _httpFactory;
     private readonly CapSolverClient _capSolver;
     private readonly ICapSolverBudget _budget;
     private readonly ResolverOptions _opts;
     private readonly ILogger<DlProtectResolver> _log;
 
-    public DlProtectResolver(PlaywrightInstaller installer,
+    public DlProtectResolver(IHttpClientFactory httpFactory,
                              CapSolverClient capSolver,
                              ICapSolverBudget budget,
                              IOptions<ResolverOptions> opts,
                              ILogger<DlProtectResolver> log)
     {
-        _installer = installer;
+        _httpFactory = httpFactory;
         _capSolver = capSolver;
         _budget = budget;
         _opts = opts.Value;
@@ -49,169 +49,141 @@ public sealed class DlProtectResolver : ILinkResolver
 
     public async Task<ResolutionOutcome> ResolveAsync(string protectedUrl, CancellationToken ct)
     {
-        await _installer.EnsureInstalledAsync(ct);
+        var capCalls = 0;
+        decimal capCost = 0m;
 
-        Directory.CreateDirectory(_opts.PersistentProfileDirectory);
-
-        using var pw = await Playwright.CreateAsync();
-        var context = await pw.Chromium.LaunchPersistentContextAsync(
-            _opts.PersistentProfileDirectory,
-            new BrowserTypeLaunchPersistentContextOptions
-            {
-                Headless = !_opts.Headed,
-                Locale = "fr-FR",
-                ViewportSize = new ViewportSize { Width = 1280, Height = 800 },
-                UserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36",
-                Args = new[] { "--disable-blink-features=AutomationControlled" }
-            });
-
-        try
+        for (var attempt = 1; attempt <= _opts.MaxAttemptsPerLink; attempt++)
         {
-            var page = await context.NewPageAsync();
-            page.SetDefaultTimeout(_opts.OverallTimeoutSeconds * 1000);
-
-            int capSolverCalls = 0;
-            decimal capSolverCost = 0m;
-
-            for (var attempt = 1; attempt <= _opts.MaxAttemptsPerLink; attempt++)
+            ct.ThrowIfCancellationRequested();
+            try
             {
-                ct.ThrowIfCancellationRequested();
-                _log.LogInformation("Resolving {Url} attempt {N}", protectedUrl, attempt);
-                try
+                var client = _httpFactory.CreateClient(NamedClients.DlProtect);
+                var cookies = new System.Net.CookieContainer();
+                using var handler = new HttpClientHandler
                 {
-                    await page.GotoAsync(protectedUrl, new PageGotoOptions
+                    CookieContainer = cookies,
+                    AllowAutoRedirect = true,
+                    UseCookies = true
+                };
+                using var http = new HttpClient(handler)
+                {
+                    Timeout = TimeSpan.FromSeconds(_opts.OverallTimeoutSeconds)
+                };
+                http.DefaultRequestHeaders.UserAgent.ParseAdd(
+                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36");
+                http.DefaultRequestHeaders.AcceptLanguage.ParseAdd("fr-FR,fr;q=0.9,en;q=0.8");
+                http.DefaultRequestHeaders.Add("Referer", "https://www.zone-telechargement.news/");
+
+                using (var getResp = await http.GetAsync(protectedUrl, ct))
+                {
+                    if (!getResp.IsSuccessStatusCode)
                     {
-                        WaitUntil = WaitUntilState.NetworkIdle,
-                        Timeout = _opts.OverallTimeoutSeconds * 1000
-                    });
-
-                    // Light wait for Turnstile to self-solve.
-                    await Task.Delay(2500, ct);
-
-                    // Try clicking any visible "Continuer"/"Continue" button.
-                    await TryClickContinueAsync(page);
-
-                    var finalUrls = await CollectFinalUrlsAsync(page);
-                    if (finalUrls.Count > 0)
-                    {
-                        var links = finalUrls.Select(u => new ResolvedLink(GuessHoster(u), u, null)).ToList();
-                        return new ResolutionOutcome(ResolutionAttemptResult.Success, links, null,
-                            capSolverCalls, capSolverCost);
+                        _log.LogWarning("dl-protect GET returned {Code}", (int)getResp.StatusCode);
+                        continue;
                     }
+                }
 
-                    // No links visible -> maybe Turnstile is blocking; try CapSolver if configured.
-                    var html = await page.ContentAsync();
-                    var siteKey = TurnstileSiteKeyRegex.Match(html).Groups["k"].Value;
-                    if (!string.IsNullOrEmpty(siteKey)
-                        && _capSolver.IsConfigured
-                        && await _budget.CanSolveAsync(ct))
+                string? token = null;
+                if (_capSolver.IsConfigured && await _budget.CanSolveAsync(ct))
+                {
+                    var siteKey = await TryReadTurnstileSiteKeyAsync(http, protectedUrl, ct);
+                    if (!string.IsNullOrEmpty(siteKey))
                     {
-                        _log.LogInformation("Falling back to CapSolver Turnstile (siteKey {SK})", siteKey);
-                        var token = await _capSolver.SolveTurnstileAsync(protectedUrl, siteKey, ct);
-                        capSolverCalls++;
-                        capSolverCost += 0.0008m;
-                        await _budget.RecordSolveAsync(0.0008m, ct);
-
-                        if (!string.IsNullOrEmpty(token))
+                        token = await _capSolver.SolveTurnstileAsync(protectedUrl, siteKey!, ct);
+                        if (token is not null)
                         {
-                            await InjectTurnstileTokenAsync(page, token);
-                            await Task.Delay(2000, ct);
-                            await TryClickContinueAsync(page);
-                            var afterCap = await CollectFinalUrlsAsync(page);
-                            if (afterCap.Count > 0)
-                            {
-                                var links = afterCap.Select(u => new ResolvedLink(GuessHoster(u), u, null)).ToList();
-                                return new ResolutionOutcome(ResolutionAttemptResult.Success, links, null,
-                                    capSolverCalls, capSolverCost);
-                            }
+                            capCalls++;
+                            capCost += 0.0008m;
+                            await _budget.RecordSolveAsync(0.0008m, ct);
                         }
                     }
                 }
-                catch (TimeoutException tex)
+
+                var form = new List<KeyValuePair<string, string>>
                 {
-                    _log.LogWarning(tex, "Timeout on attempt {N}", attempt);
-                }
-                catch (PlaywrightException pex)
+                    new("subform", "unlock"),
+                    new("cf-turnstile-response", token ?? "invalid")
+                };
+                using var postContent = new FormUrlEncodedContent(form);
+                using var postResp = await http.PostAsync(protectedUrl, postContent, ct);
+                if (!postResp.IsSuccessStatusCode)
                 {
-                    _log.LogWarning(pex, "Playwright error on attempt {N}", attempt);
+                    _log.LogWarning("dl-protect POST returned {Code}", (int)postResp.StatusCode);
+                    continue;
                 }
+                var body = await postResp.Content.ReadAsStringAsync(ct);
+                var finalUrls = ExtractFinalUrls(body);
+                if (finalUrls.Count > 0)
+                {
+                    var links = finalUrls
+                        .Select(u => new ResolvedLink(GuessHoster(u), u, null))
+                        .ToList();
+                    return new ResolutionOutcome(ResolutionAttemptResult.Success, links, null, capCalls, capCost);
+                }
+
+                _log.LogWarning("dl-protect POST yielded no hoster URL on attempt {N}", attempt);
             }
-
-            return new ResolutionOutcome(ResolutionAttemptResult.BotDetected,
-                Array.Empty<ResolvedLink>(),
-                "Could not extract any final hoster URL after all attempts",
-                capSolverCalls, capSolverCost);
-        }
-        finally
-        {
-            await context.CloseAsync();
-        }
-    }
-
-    private static async Task TryClickContinueAsync(IPage page)
-    {
-        // Order: most specific selectors first.
-        string[] candidates = new[]
-        {
-            "button:has-text(\"Continuer\")",
-            "button:has-text(\"Continue\")",
-            "a:has-text(\"Continuer\")",
-            "a:has-text(\"Continue\")",
-            "input[type=submit][value*=\"Continuer\" i]"
-        };
-
-        foreach (var sel in candidates)
-        {
-            try
+            catch (TaskCanceledException) when (!ct.IsCancellationRequested)
             {
-                var loc = page.Locator(sel);
-                if (await loc.CountAsync() > 0 && await loc.First.IsVisibleAsync())
-                {
-                    await loc.First.ClickAsync(new LocatorClickOptions { Timeout = 5000 });
-                    return;
-                }
+                _log.LogWarning("dl-protect request timed out (attempt {N})", attempt);
             }
-            catch { /* try next */ }
+            catch (HttpRequestException hex)
+            {
+                _log.LogWarning(hex, "dl-protect HTTP error on attempt {N}", attempt);
+            }
         }
+
+        return new ResolutionOutcome(
+            ResolutionAttemptResult.NoLinksFound,
+            Array.Empty<ResolvedLink>(),
+            "Could not extract any final hoster URL after all attempts",
+            capCalls, capCost);
     }
 
-    private static async Task<List<string>> CollectFinalUrlsAsync(IPage page)
+    private static List<string> ExtractFinalUrls(string body)
     {
+        var doc = new HtmlParser().ParseDocument(body);
         var urls = new List<string>();
-        // dl-protect typically reveals an anchor with class "lien" or similar.
-        var anchorHrefs = await page.EvalOnSelectorAllAsync<string[]>("a[href]",
-            "els => els.map(e => e.href)");
 
-        foreach (var href in anchorHrefs)
+        // Preferred anchor: explicit class.
+        foreach (var a in doc.QuerySelectorAll("a.dest-url, a.btn-proceed").OfType<IHtmlAnchorElement>())
         {
-            if (string.IsNullOrEmpty(href)) continue;
-            if (FinalHosterDomainHints.Any(d => href.Contains(d, StringComparison.OrdinalIgnoreCase)))
-            {
-                urls.Add(href);
-            }
+            var href = a.GetAttribute("href");
+            if (!string.IsNullOrEmpty(href) && IsFinalHosterUrl(href))
+                urls.Add(href!);
         }
 
-        // Also look for plain-text URLs the page may render in <input>/<code> blocks.
-        var bodyText = await page.InnerTextAsync("body");
-        foreach (var d in FinalHosterDomainHints)
+        // Fallback: any <a> on the page that points at a known hoster domain.
+        if (urls.Count == 0)
         {
-            foreach (Match m in Regex.Matches(bodyText, @"https?://[^\s""'<>]+" + Regex.Escape(d) + @"[^\s""'<>]*"))
+            foreach (var a in doc.QuerySelectorAll("a[href]").OfType<IHtmlAnchorElement>())
             {
-                urls.Add(m.Value);
+                var href = a.GetAttribute("href") ?? string.Empty;
+                if (IsFinalHosterUrl(href)) urls.Add(href);
             }
         }
 
         return urls.Distinct().ToList();
     }
 
-    private static async Task InjectTurnstileTokenAsync(IPage page, string token)
+    private static bool IsFinalHosterUrl(string href)
     {
-        // Set the cf-turnstile-response value used by dl-protect's form, then dispatch
-        // any onchange handlers it may rely on.
-        await page.EvaluateAsync(@"(t) => {
-            const inputs = document.querySelectorAll('input[name=cf-turnstile-response], input[name=g-recaptcha-response]');
-            inputs.forEach(i => { i.value = t; i.dispatchEvent(new Event('change', { bubbles: true })); });
-        }", token);
+        if (string.IsNullOrEmpty(href)) return false;
+        if (!href.StartsWith("http", StringComparison.OrdinalIgnoreCase)) return false;
+        if (href.Contains("dl-protect.link", StringComparison.OrdinalIgnoreCase)) return false;
+        return FinalHosterDomainHints.Any(d => href.Contains(d, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static async Task<string?> TryReadTurnstileSiteKeyAsync(HttpClient http, string url, CancellationToken ct)
+    {
+        try
+        {
+            var html = await http.GetStringAsync(url, ct);
+            var m = System.Text.RegularExpressions.Regex.Match(html,
+                "data-sitekey=[\"'](?<k>[A-Za-z0-9_\\-]+)[\"']");
+            return m.Success ? m.Groups["k"].Value : null;
+        }
+        catch { return null; }
     }
 
     private static string GuessHoster(string url)
@@ -222,6 +194,7 @@ public sealed class DlProtectResolver : ILinkResolver
         if (u.Contains("uploady.io")) return "Uploady";
         if (u.Contains("dailyuploads.net")) return "DailyUploads";
         if (u.Contains("nitroflare.com")) return "Nitroflare";
+        if (u.Contains("turbobit.net")) return "Turbobit";
         return "Unknown";
     }
 }

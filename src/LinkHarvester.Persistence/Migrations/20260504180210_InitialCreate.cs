@@ -11,6 +11,30 @@ namespace LinkHarvester.Persistence.Migrations
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
+                name: "AppSettings",
+                columns: table => new
+                {
+                    Id = table.Column<int>(type: "INTEGER", nullable: false)
+                        .Annotation("Sqlite:Autoincrement", true),
+                    SynologyBaseUrl = table.Column<string>(type: "TEXT", maxLength: 256, nullable: false),
+                    SynologyUsername = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
+                    SynologyPasswordEncrypted = table.Column<string>(type: "TEXT", maxLength: 2048, nullable: false),
+                    SynologyOtpCode = table.Column<string>(type: "TEXT", nullable: true),
+                    SynologyMovieDestination = table.Column<string>(type: "TEXT", maxLength: 256, nullable: false),
+                    SynologySeriesDestination = table.Column<string>(type: "TEXT", maxLength: 256, nullable: false),
+                    ScanIntervalMinutes = table.Column<int>(type: "INTEGER", nullable: false),
+                    ScanOnStartup = table.Column<bool>(type: "INTEGER", nullable: false),
+                    HosterPriorityCsv = table.Column<string>(type: "TEXT", maxLength: 512, nullable: false),
+                    AuthUsername = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
+                    AuthPasswordEncrypted = table.Column<string>(type: "TEXT", maxLength: 2048, nullable: false),
+                    UpdatedAt = table.Column<long>(type: "INTEGER", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_AppSettings", x => x.Id);
+                });
+
+            migrationBuilder.CreateTable(
                 name: "CapSolverSpends",
                 columns: table => new
                 {
@@ -207,6 +231,9 @@ namespace LinkHarvester.Persistence.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.DropTable(
+                name: "AppSettings");
+
             migrationBuilder.DropTable(
                 name: "CapSolverSpends");
 

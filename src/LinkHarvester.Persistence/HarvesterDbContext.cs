@@ -13,6 +13,7 @@ public class HarvesterDbContext : DbContext
     public DbSet<SubmissionEntity> Submissions => Set<SubmissionEntity>();
     public DbSet<ScanRunEntity> ScanRuns => Set<ScanRunEntity>();
     public DbSet<CapSolverSpendEntity> CapSolverSpends => Set<CapSolverSpendEntity>();
+    public DbSet<AppSettingsEntity> AppSettings => Set<AppSettingsEntity>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder cfg)
     {
@@ -69,6 +70,18 @@ public class HarvesterDbContext : DbContext
         b.Entity<CapSolverSpendEntity>(e =>
         {
             e.HasIndex(c => new { c.Year, c.Month }).IsUnique();
+        });
+
+        b.Entity<AppSettingsEntity>(e =>
+        {
+            e.Property(s => s.SynologyBaseUrl).HasMaxLength(256);
+            e.Property(s => s.SynologyUsername).HasMaxLength(128);
+            e.Property(s => s.SynologyPasswordEncrypted).HasMaxLength(2048);
+            e.Property(s => s.AuthUsername).HasMaxLength(128);
+            e.Property(s => s.AuthPasswordEncrypted).HasMaxLength(2048);
+            e.Property(s => s.HosterPriorityCsv).HasMaxLength(512);
+            e.Property(s => s.SynologyMovieDestination).HasMaxLength(256);
+            e.Property(s => s.SynologySeriesDestination).HasMaxLength(256);
         });
     }
 }

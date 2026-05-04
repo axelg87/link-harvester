@@ -11,8 +11,8 @@ public static class ResolutionServiceCollectionExtensions
         services.Configure<ResolverOptions>(config.GetSection("Resolver"));
         services.Configure<CapSolverOptions>(config.GetSection("CapSolver"));
 
-        services.AddSingleton<PlaywrightInstaller>();
         services.AddSingleton<ICapSolverBudget, CapSolverBudget>();
+        services.AddHttpClient(NamedClients.DlProtect, c => c.Timeout = TimeSpan.FromSeconds(30));
         services.AddHttpClient<CapSolverClient>(c => c.Timeout = TimeSpan.FromSeconds(30));
         services.AddSingleton<ILinkResolver, DlProtectResolver>();
         return services;

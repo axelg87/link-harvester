@@ -347,3 +347,66 @@ a {
 @media (min-width: 720px) {
     .lh-card-title { font-size: 1.15rem; }
 }
+
+/* Settings */
+.lh-settings { display: flex; flex-direction: column; gap: 12px; }
+.lh-settings-head { display: flex; align-items: center; gap: 12px; }
+.lh-settings-head h1 { margin: 0; font-size: 1.3rem; }
+.lh-section {
+    background: var(--lh-surface);
+    border: 1px solid var(--lh-border);
+    border-radius: 14px;
+    padding: 14px 16px;
+}
+.lh-section h2 {
+    margin: 0 0 4px 0;
+    font-size: 1rem;
+    color: var(--lh-text);
+}
+.lh-section .lh-muted {
+    margin: 0 0 12px 0;
+    font-size: 0.85rem;
+}
+.lh-row { display: flex; align-items: center; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
+.lh-test-ok { color: var(--lh-success); font-weight: 600; }
+.lh-test-err { color: var(--lh-danger); font-size: 0.9rem; }
+.lh-host-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.lh-host-rank {
+    width: 24px; text-align: center;
+    background: var(--lh-surface-3);
+    border-radius: 6px;
+    padding: 2px 0;
+    font-weight: 600;
+    color: var(--lh-text-muted);
+}
+.lh-host-row input[type=text] {
+    flex: 1;
+}
+.lh-field-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+}
+.lh-field-row span { font-size: 0.95rem; color: var(--lh-text); }
+input[type=text], input[type=password], input[type=number] {
+    background: var(--lh-bg);
+    border: 1px solid var(--lh-border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: var(--lh-text);
+    font-size: 1rem;
+    font-family: inherit;
+}
+input[type=text]:focus, input[type=password]:focus, input[type=number]:focus {
+    outline: 2px solid var(--lh-primary);
+    border-color: transparent;
+}
+input[type=checkbox] {
+    width: 18px; height: 18px;
+    accent-color: var(--lh-primary);
+}

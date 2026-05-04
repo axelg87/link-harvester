@@ -1,0 +1,229 @@
+@page "/settings"
+@inject HarvesterApi Api
+@inject NavigationManager Nav
+
+<PageTitle>Settings</PageTitle>
+
+<div class="lh-settings">
+    <div class="lh-settings-head">
+        <a href="/" class="lh-link">← Inbox</a>
+        <h1>Settings</h1>
+    </div>
+
+    @if (_loading)
+    {
+        <p class="lh-muted">Loading…</p>
+    }
+    else if (_form is null)
+    {
+        <p class="lh-error">Failed to load settings.</p>
+    }
+    else
+    {
+        <EditForm Model="_form" OnValidSubmit="Save">
+            <section class="lh-section">
+                <h2>Synology DownloadStation</h2>
+                <p class="lh-muted">Where the "Send to NAS" button submits to.</p>
+
+                <label class="lh-field">
+                    <span>Base URL</span>
+                    <InputText @bind-Value="_form.SynologyBaseUrl" placeholder="http://your-nas.local:5000" />
+                </label>
+                <label class="lh-field">
+                    <span>Username</span>
+                    <InputText @bind-Value="_form.SynologyUsername" autocomplete="off" />
+                </label>
+                <label class="lh-field">
+                    <span>Password @(_existing?.SynologyPasswordSet == true ? "(leave blank to keep)" : "")</span>
+                    <InputText @bind-Value="_form.SynologyPassword" type="password" autocomplete="new-password" />
+                </label>
+                <label class="lh-field">
+                    <span>OTP code (if 2FA enabled, leave empty otherwise)</span>
+                    <InputText @bind-Value="_form.SynologyOtpCode" autocomplete="off" />
+                </label>
+                <label class="lh-field">
+                    <span>Movies destination folder</span>
+                    <InputText @bind-Value="_form.SynologyMovieDestination" placeholder="video/movies" />
+                </label>
+                <label class="lh-field">
+                    <span>Series destination folder</span>
+                    <InputText @bind-Value="_form.SynologySeriesDestination" placeholder="video/series" />
+                </label>
+
+                <div class="lh-row">
+                    <button type="button" class="lh-secondary" @onclick="TestSynology" disabled="@_busy">
+                        @(_testing ? "Testing…" : "Test connection")
+                    </button>
+                    @if (_testResult is { } tr)
+                    {
+                        <span class="@(tr.Ok ? "lh-test-ok" : "lh-test-err")">
+                            @(tr.Ok ? "✓ Connected" : "✕ " + tr.Error)
+                        </span>
+                    }
+                </div>
+            </section>
+
+            <section class="lh-section">
+                <h2>Scanning</h2>
+                <label class="lh-field">
+                    <span>Auto-scan interval (minutes)</span>
+                    <InputNumber @bind-Value="_form.ScanIntervalMinutes" min="1" />
+                </label>
+                <label class="lh-field lh-field-row">
+                    <InputCheckbox @bind-Value="_form.ScanOnStartup" />
+                    <span>Scan once on app startup</span>
+                </label>
+            </section>
+
+            <section class="lh-section">
+                <h2>Hoster priority</h2>
+                <p class="lh-muted">Top hoster wins. Articles whose hosters aren't in this list are skipped at submit time.</p>
+                @for (var i = 0; i < _form.HosterPriority.Count; i++)
+                {
+                    var idx = i;
+                    <div class="lh-host-row">
+                        <span class="lh-host-rank">@(idx + 1)</span>
+                        <InputText @bind-Value="_form.HosterPriority[idx]" />
+                        <button type="button" class="lh-link" @onclick="() => MoveHost(idx, -1)" disabled="@(idx == 0)">↑</button>
+                        <button type="button" class="lh-link" @onclick="() => MoveHost(idx, 1)" disabled="@(idx == _form.HosterPriority.Count - 1)">↓</button>
+                        <button type="button" class="lh-link" @onclick="() => RemoveHost(idx)">remove</button>
+                    </div>
+                }
+                <button type="button" class="lh-secondary" @onclick="AddHost">+ Add hoster</button>
+            </section>
+
+            <section class="lh-section">
+                <h2>Login (this app)</h2>
+                <p class="lh-muted">Used to access this website.</p>
+                <label class="lh-field">
+                    <span>Username</span>
+                    <InputText @bind-Value="_form.AuthUsername" />
+                </label>
+                <label class="lh-field">
+                    <span>Password (leave blank to keep)</span>
+                    <InputText @bind-Value="_form.AuthPassword" type="password" autocomplete="new-password" />
+                </label>
+            </section>
+
+            @if (_message is not null)
+            {
+                <p class="@(_isError ? "lh-error" : "lh-muted")">@_message</p>
+            }
+
+            <div class="lh-card-actions">
+                <button class="lh-primary" type="submit" disabled="@_busy">
+                    @(_busy ? "Saving…" : "Save")
+                </button>
+            </div>
+        </EditForm>
+    }
+</div>
+
+@code {
+    private bool _loading = true;
+    private bool _busy;
+    private bool _testing;
+    private bool _isError;
+    private string? _message;
+    private SynologyTestResult? _testResult;
+    private Settings? _existing;
+    private FormModel? _form;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _existing = await Api.GetSettingsAsync();
+            _form = FormModel.From(_existing);
+        }
+        catch (Exception ex)
+        {
+            _message = ex.Message;
+            _isError = true;
+        }
+        finally { _loading = false; }
+    }
+
+    private async Task Save()
+    {
+        if (_form is null) return;
+        _busy = true;
+        _message = null;
+        try
+        {
+            await Api.SaveSettingsAsync(_form.ToUpdate());
+            _existing = await Api.GetSettingsAsync();
+            _form = FormModel.From(_existing);
+            _message = "Saved.";
+            _isError = false;
+        }
+        catch (Exception ex)
+        {
+            _message = "Failed: " + ex.Message;
+            _isError = true;
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task TestSynology()
+    {
+        _testing = true;
+        _testResult = null;
+        try { _testResult = await Api.TestSynologyAsync(); }
+        catch (Exception ex) { _testResult = new SynologyTestResult(false, ex.Message); }
+        finally { _testing = false; }
+    }
+
+    private void AddHost() => _form!.HosterPriority.Add("");
+    private void RemoveHost(int i) => _form!.HosterPriority.RemoveAt(i);
+    private void MoveHost(int i, int delta)
+    {
+        var list = _form!.HosterPriority;
+        var j = i + delta;
+        if (j < 0 || j >= list.Count) return;
+        (list[i], list[j]) = (list[j], list[i]);
+    }
+
+    private sealed class FormModel
+    {
+        public string SynologyBaseUrl { get; set; } = "";
+        public string SynologyUsername { get; set; } = "";
+        public string SynologyPassword { get; set; } = "";
+        public string? SynologyOtpCode { get; set; }
+        public string SynologyMovieDestination { get; set; } = "";
+        public string SynologySeriesDestination { get; set; } = "";
+        public int ScanIntervalMinutes { get; set; }
+        public bool ScanOnStartup { get; set; }
+        public List<string> HosterPriority { get; set; } = new();
+        public string AuthUsername { get; set; } = "";
+        public string AuthPassword { get; set; } = "";
+
+        public static FormModel From(Settings s) => new()
+        {
+            SynologyBaseUrl = s.SynologyBaseUrl,
+            SynologyUsername = s.SynologyUsername,
+            SynologyPassword = "",
+            SynologyOtpCode = s.SynologyOtpCode,
+            SynologyMovieDestination = s.SynologyMovieDestination,
+            SynologySeriesDestination = s.SynologySeriesDestination,
+            ScanIntervalMinutes = s.ScanIntervalMinutes,
+            ScanOnStartup = s.ScanOnStartup,
+            HosterPriority = s.HosterPriority.ToList(),
+            AuthUsername = s.AuthUsername,
+            AuthPassword = ""
+        };
+
+        public UpdateSettings ToUpdate() => new(
+            SynologyBaseUrl: SynologyBaseUrl,
+            SynologyUsername: SynologyUsername,
+            SynologyPassword: SynologyPassword,
+            SynologyOtpCode: SynologyOtpCode,
+            SynologyMovieDestination: SynologyMovieDestination,
+            SynologySeriesDestination: SynologySeriesDestination,
+            ScanIntervalMinutes: ScanIntervalMinutes,
+            ScanOnStartup: ScanOnStartup,
+            HosterPriority: HosterPriority.Where(h => !string.IsNullOrWhiteSpace(h)).ToList(),
+            AuthUsername: AuthUsername,
+            AuthPassword: AuthPassword);
+    }
+}

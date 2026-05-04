@@ -34,3 +34,17 @@ public sealed record ScanRun(
 public sealed record SendResult(int SubmissionId, string Status, string? Response, List<string> TaskIds);
 
 public sealed record BudgetSnapshot(decimal SpentUsd, int Calls);
+
+public sealed record Settings(
+    string SynologyBaseUrl, string SynologyUsername, bool SynologyPasswordSet,
+    string? SynologyOtpCode, string SynologyMovieDestination, string SynologySeriesDestination,
+    int ScanIntervalMinutes, bool ScanOnStartup, List<string> HosterPriority,
+    string AuthUsername, bool AuthPasswordSet);
+
+public sealed record UpdateSettings(
+    string? SynologyBaseUrl, string? SynologyUsername, string? SynologyPassword,
+    string? SynologyOtpCode, string? SynologyMovieDestination, string? SynologySeriesDestination,
+    int? ScanIntervalMinutes, bool? ScanOnStartup, List<string>? HosterPriority,
+    string? AuthUsername, string? AuthPassword);
+
+public sealed record SynologyTestResult(bool Ok, string? Error);

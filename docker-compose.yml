@@ -8,11 +8,6 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/app/data
-    environment:
-      Auth__Username: ${LH_USERNAME:-admin}
-      Auth__Password: ${LH_PASSWORD:?Set LH_PASSWORD in your .env}
-      Synology__BaseUrl: ${LH_SYNO_URL:-}
-      Synology__Username: ${LH_SYNO_USER:-}
-      Synology__Password: ${LH_SYNO_PASS:-}
-      CapSolver__ApiKey: ${LH_CAPSOLVER_KEY:-}
-      CapSolver__Enabled: ${LH_CAPSOLVER_ENABLED:-false}
+    # All app settings (login, NAS credentials, hoster priority, scan
+    # interval) are configured from the in-app Settings page and stored
+    # encrypted in /app/data. No env vars needed.

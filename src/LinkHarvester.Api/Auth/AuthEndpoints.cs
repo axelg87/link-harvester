@@ -1,8 +1,7 @@
 using System.Security.Claims;
+using LinkHarvester.Core;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Options;
 
 namespace LinkHarvester.Api.Auth;
 
@@ -12,24 +11,20 @@ public static class AuthEndpoints
     {
         var grp = routes.MapGroup("/api/auth");
 
-        grp.MapPost("/login", async (LoginRequest req, HttpContext ctx, IOptions<AuthOptions> opts) =>
+        grp.MapPost("/login", async (LoginRequest req, HttpContext ctx, ISettingsService settings) =>
         {
-            var o = opts.Value;
-            if (!string.Equals(req.Username, o.Username, StringComparison.Ordinal) ||
-                !string.Equals(req.Password, o.Password, StringComparison.Ordinal))
-            {
+            if (!settings.VerifyCredentials(req.Username ?? string.Empty, req.Password ?? string.Empty))
                 return Results.Unauthorized();
-            }
 
             var identity = new ClaimsIdentity(new[]
             {
-                new Claim(ClaimTypes.Name, o.Username),
+                new Claim(ClaimTypes.Name, settings.Current.AuthUsername),
                 new Claim(ClaimTypes.Role, "user"),
             }, CookieAuthenticationDefaults.AuthenticationScheme);
             await ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme,
                 new ClaimsPrincipal(identity),
-                new AuthenticationProperties { IsPersistent = true, ExpiresUtc = DateTimeOffset.UtcNow.AddDays(o.CookieDurationDays) });
-            return Results.Ok(new { user = o.Username });
+                new AuthenticationProperties { IsPersistent = true, ExpiresUtc = DateTimeOffset.UtcNow.AddDays(30) });
+            return Results.Ok(new { user = settings.Current.AuthUsername });
         });
 
         grp.MapPost("/logout", async (HttpContext ctx) =>
