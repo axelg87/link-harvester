@@ -27,4 +27,10 @@
     <ProjectReference Include="..\..\src\LinkHarvester.Core\LinkHarvester.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Fixtures\**\*.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>
