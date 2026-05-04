@@ -1,0 +1,190 @@
+using System.Text.Json;
+using LinkHarvester.Core;
+using LinkHarvester.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace LinkHarvester.Worker;
+
+/// <summary>
+/// Coordinates resolving + sending an article to DownloadStation.
+/// Resolution is on-demand (lazy) so we don't burn captcha budget on items
+/// the user never picks.
+/// </summary>
+public sealed class SubmissionService
+{
+    private readonly IDbContextFactory<HarvesterDbContext> _factory;
+    private readonly ILinkResolver _resolver;
+    private readonly IDownloadStationClient _dsm;
+    private readonly Synology.SynologyOptions _dsmOptions;
+    private readonly HarvesterOptions _opts;
+    private readonly ILogger<SubmissionService> _log;
+
+    public SubmissionService(IDbContextFactory<HarvesterDbContext> factory,
+                              ILinkResolver resolver,
+                              IDownloadStationClient dsm,
+                              IOptions<Synology.SynologyOptions> dsmOptions,
+                              IOptions<HarvesterOptions> opts,
+                              ILogger<SubmissionService> log)
+    {
+        _factory = factory;
+        _resolver = resolver;
+        _dsm = dsm;
+        _dsmOptions = dsmOptions.Value;
+        _opts = opts.Value;
+        _log = log;
+    }
+
+    /// <summary>
+    /// Resolves dl-protect links for an article, in priority order, until at least
+    /// one hoster is fully resolved. Persists the resolution rows.
+    /// </summary>
+    public async Task<IReadOnlyList<ResolvedLinkEntity>> ResolveArticleAsync(int articleId, CancellationToken ct)
+    {
+        await using var db = await _factory.CreateDbContextAsync(ct);
+        var article = await db.Articles
+            .Include(a => a.ResolvedLinks)
+            .FirstOrDefaultAsync(a => a.Id == articleId, ct)
+            ?? throw new InvalidOperationException($"No article {articleId}");
+
+        if (article.ResolvedLinks.Count > 0)
+            return article.ResolvedLinks.ToList();
+
+        var hosters = JsonSerializer.Deserialize<List<HosterLinks>>(article.HostersJson) ?? new();
+        var ordered = OrderByPriority(hosters);
+
+        ResolutionAttemptResult lastResult = ResolutionAttemptResult.Unknown;
+        foreach (var hoster in ordered)
+        {
+            var resolvedForHoster = new List<ResolvedLinkEntity>();
+            bool failed = false;
+            foreach (var link in hoster.Links)
+            {
+                var outcome = await _resolver.ResolveAsync(link.Url, ct);
+                lastResult = outcome.Result;
+                if (outcome.Result != ResolutionAttemptResult.Success || outcome.Links.Count == 0)
+                {
+                    _log.LogWarning("Hoster {H} link {U} did not resolve ({R})", hoster.Hoster, link.Url, outcome.Result);
+                    failed = true;
+                    break;
+                }
+
+                foreach (var rl in outcome.Links)
+                {
+                    resolvedForHoster.Add(new ResolvedLinkEntity
+                    {
+                        ArticleId = article.Id,
+                        Hoster = string.IsNullOrEmpty(rl.Hoster) ? hoster.Hoster : rl.Hoster,
+                        Url = rl.Url,
+                        EpisodeIndex = link.EpisodeIndex,
+                        ResolvedAt = DateTimeOffset.UtcNow
+                    });
+                }
+            }
+
+            if (!failed && resolvedForHoster.Count > 0)
+            {
+                db.ResolvedLinks.AddRange(resolvedForHoster);
+                article.Status = ArticleStatus.Resolved;
+                article.ResolvedAt = DateTimeOffset.UtcNow;
+                await db.SaveChangesAsync(ct);
+                return resolvedForHoster;
+            }
+
+            article.ResolutionAttempts++;
+        }
+
+        article.Status = ArticleStatus.Failed;
+        article.FailureReason = $"Could not resolve any hoster ({lastResult})";
+        await db.SaveChangesAsync(ct);
+        return Array.Empty<ResolvedLinkEntity>();
+    }
+
+    public async Task<SubmissionEntity> SendToDsmAsync(int articleId, CancellationToken ct)
+    {
+        var resolved = await ResolveArticleAsync(articleId, ct);
+        if (resolved.Count == 0)
+            throw new InvalidOperationException("No resolved links to send.");
+
+        await using var db = await _factory.CreateDbContextAsync(ct);
+        var article = await db.Articles
+            .Include(a => a.Title)
+            .FirstAsync(a => a.Id == articleId, ct);
+
+        var dest = article.Title.Kind == TitleKind.Movie
+            ? _dsmOptions.DefaultMovieDestination
+            : _dsmOptions.DefaultSeriesDestination;
+
+        var urls = resolved.Select(r => r.Url).ToList();
+        var submission = new SubmissionEntity
+        {
+            ArticleId = articleId,
+            SubmittedUrlsJson = JsonSerializer.Serialize(urls),
+            Status = SubmissionStatus.Pending,
+            SubmittedAt = DateTimeOffset.UtcNow
+        };
+        db.Submissions.Add(submission);
+        await db.SaveChangesAsync(ct);
+
+        try
+        {
+            var taskIds = await _dsm.CreateTasksAsync(urls, dest, ct);
+            submission.Status = SubmissionStatus.Sent;
+            submission.DsmTaskIdsJson = JsonSerializer.Serialize(taskIds);
+            article.Status = ArticleStatus.Submitted;
+            article.SubmittedAt = DateTimeOffset.UtcNow;
+
+            article.Title.Status = TitleStatus.Submitted;
+            if (article.Title.BestSubmittedQualityScore is null ||
+                article.QualityScore > article.Title.BestSubmittedQualityScore)
+            {
+                article.Title.BestSubmittedQualityScore = article.QualityScore;
+            }
+            article.Title.UpdatedAt = DateTimeOffset.UtcNow;
+        }
+        catch (Exception ex)
+        {
+            submission.Status = SubmissionStatus.Failed;
+            submission.ResponseMessage = ex.Message;
+            _log.LogError(ex, "Failed to push to DSM for article {Id}", articleId);
+        }
+
+        await db.SaveChangesAsync(ct);
+        return submission;
+    }
+
+    public async Task SkipArticleAsync(int articleId, CancellationToken ct)
+    {
+        await using var db = await _factory.CreateDbContextAsync(ct);
+        var article = await db.Articles
+            .Include(a => a.Title)
+            .FirstAsync(a => a.Id == articleId, ct);
+        article.Status = ArticleStatus.Skipped;
+
+        // If the title has no other inbox-grade articles, mark it skipped too.
+        var anyOpen = await db.Articles.AnyAsync(a =>
+            a.TitleId == article.TitleId &&
+            a.Id != article.Id &&
+            (a.Status == ArticleStatus.Parsed || a.Status == ArticleStatus.Resolved || a.Status == ArticleStatus.InInbox), ct);
+        if (!anyOpen && article.Title.Status != TitleStatus.Submitted)
+        {
+            article.Title.Status = TitleStatus.Skipped;
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    private List<HosterLinks> OrderByPriority(List<HosterLinks> hosters)
+    {
+        var priority = _opts.HosterPriority;
+        return hosters
+            .OrderBy(h =>
+            {
+                var idx = priority.FindIndex(p =>
+                    string.Equals(p, h.Hoster, StringComparison.OrdinalIgnoreCase));
+                return idx < 0 ? int.MaxValue : idx;
+            })
+            .ToList();
+    }
+}
