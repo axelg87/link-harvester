@@ -1,0 +1,12 @@
+**/bin
+**/obj
+**/data
+**/.vs
+**/.idea
+**/playwright-profile
+*.user
+appsettings.Development.json
+appsettings.Local.json
+.git
+.gitignore
+.dockerignore
