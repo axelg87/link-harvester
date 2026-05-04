@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\LinkHarvester.Core\LinkHarvester.Core.csproj" />
+    <ProjectReference Include="..\LinkHarvester.Persistence\LinkHarvester.Persistence.csproj" />
+    <ProjectReference Include="..\LinkHarvester.Sources\LinkHarvester.Sources.csproj" />
+    <ProjectReference Include="..\LinkHarvester.Resolution\LinkHarvester.Resolution.csproj" />
+    <ProjectReference Include="..\LinkHarvester.Synology\LinkHarvester.Synology.csproj" />
+    <ProjectReference Include="..\LinkHarvester.Worker\LinkHarvester.Worker.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.Cookies" Version="2.3.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="8.0.10" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.10">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

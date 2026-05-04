@@ -1,0 +1,10 @@
+bin/
+obj/
+*.user
+appsettings.Development.json
+appsettings.Local.json
+linkharvester.db*
+data/
+playwright-profile/
+.vs/
+.idea/

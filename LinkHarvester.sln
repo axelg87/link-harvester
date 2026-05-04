@@ -1,0 +1,85 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{F27826EF-0231-4CB2-A39A-02739D7C259B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinkHarvester.Core", "src\LinkHarvester.Core\LinkHarvester.Core.csproj", "{5C0742BA-0F74-46F5-AC18-DD8390D51FDA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinkHarvester.Persistence", "src\LinkHarvester.Persistence\LinkHarvester.Persistence.csproj", "{F5A807F5-3A5D-4655-A277-F3BF4A201A9F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinkHarvester.Sources", "src\LinkHarvester.Sources\LinkHarvester.Sources.csproj", "{AFBBBD49-8BE5-4B28-A168-A80C249C27EA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinkHarvester.Resolution", "src\LinkHarvester.Resolution\LinkHarvester.Resolution.csproj", "{7BAA7113-B69B-4964-894B-70D1A96A068B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinkHarvester.Synology", "src\LinkHarvester.Synology\LinkHarvester.Synology.csproj", "{AB1CC000-E8E5-434E-BD59-2DA3DE42ED05}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinkHarvester.Worker", "src\LinkHarvester.Worker\LinkHarvester.Worker.csproj", "{63A49C8F-2A9C-4C51-BC53-38308CE94716}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinkHarvester.Api", "src\LinkHarvester.Api\LinkHarvester.Api.csproj", "{44EA103D-96D8-4347-A582-A31F84E1D8AC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinkHarvester.Web", "src\LinkHarvester.Web\LinkHarvester.Web.csproj", "{578915BA-F7EE-4EA6-8AC6-10046F234C78}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{A248B87E-08D8-4415-9A9B-3F8EB7B3A255}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinkHarvester.Sources.Tests", "tests\LinkHarvester.Sources.Tests\LinkHarvester.Sources.Tests.csproj", "{33B0FCC6-D8BB-42EC-A514-B8A20BA8E48C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{5C0742BA-0F74-46F5-AC18-DD8390D51FDA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5C0742BA-0F74-46F5-AC18-DD8390D51FDA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5C0742BA-0F74-46F5-AC18-DD8390D51FDA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5C0742BA-0F74-46F5-AC18-DD8390D51FDA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F5A807F5-3A5D-4655-A277-F3BF4A201A9F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F5A807F5-3A5D-4655-A277-F3BF4A201A9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F5A807F5-3A5D-4655-A277-F3BF4A201A9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F5A807F5-3A5D-4655-A277-F3BF4A201A9F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AFBBBD49-8BE5-4B28-A168-A80C249C27EA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AFBBBD49-8BE5-4B28-A168-A80C249C27EA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AFBBBD49-8BE5-4B28-A168-A80C249C27EA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AFBBBD49-8BE5-4B28-A168-A80C249C27EA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7BAA7113-B69B-4964-894B-70D1A96A068B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7BAA7113-B69B-4964-894B-70D1A96A068B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7BAA7113-B69B-4964-894B-70D1A96A068B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7BAA7113-B69B-4964-894B-70D1A96A068B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AB1CC000-E8E5-434E-BD59-2DA3DE42ED05}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AB1CC000-E8E5-434E-BD59-2DA3DE42ED05}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AB1CC000-E8E5-434E-BD59-2DA3DE42ED05}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AB1CC000-E8E5-434E-BD59-2DA3DE42ED05}.Release|Any CPU.Build.0 = Release|Any CPU
+		{63A49C8F-2A9C-4C51-BC53-38308CE94716}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{63A49C8F-2A9C-4C51-BC53-38308CE94716}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{63A49C8F-2A9C-4C51-BC53-38308CE94716}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{63A49C8F-2A9C-4C51-BC53-38308CE94716}.Release|Any CPU.Build.0 = Release|Any CPU
+		{44EA103D-96D8-4347-A582-A31F84E1D8AC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{44EA103D-96D8-4347-A582-A31F84E1D8AC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{44EA103D-96D8-4347-A582-A31F84E1D8AC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{44EA103D-96D8-4347-A582-A31F84E1D8AC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{578915BA-F7EE-4EA6-8AC6-10046F234C78}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{578915BA-F7EE-4EA6-8AC6-10046F234C78}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{578915BA-F7EE-4EA6-8AC6-10046F234C78}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{578915BA-F7EE-4EA6-8AC6-10046F234C78}.Release|Any CPU.Build.0 = Release|Any CPU
+		{33B0FCC6-D8BB-42EC-A514-B8A20BA8E48C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{33B0FCC6-D8BB-42EC-A514-B8A20BA8E48C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{33B0FCC6-D8BB-42EC-A514-B8A20BA8E48C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{33B0FCC6-D8BB-42EC-A514-B8A20BA8E48C}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{5C0742BA-0F74-46F5-AC18-DD8390D51FDA} = {F27826EF-0231-4CB2-A39A-02739D7C259B}
+		{F5A807F5-3A5D-4655-A277-F3BF4A201A9F} = {F27826EF-0231-4CB2-A39A-02739D7C259B}
+		{AFBBBD49-8BE5-4B28-A168-A80C249C27EA} = {F27826EF-0231-4CB2-A39A-02739D7C259B}
+		{7BAA7113-B69B-4964-894B-70D1A96A068B} = {F27826EF-0231-4CB2-A39A-02739D7C259B}
+		{AB1CC000-E8E5-434E-BD59-2DA3DE42ED05} = {F27826EF-0231-4CB2-A39A-02739D7C259B}
+		{63A49C8F-2A9C-4C51-BC53-38308CE94716} = {F27826EF-0231-4CB2-A39A-02739D7C259B}
+		{44EA103D-96D8-4347-A582-A31F84E1D8AC} = {F27826EF-0231-4CB2-A39A-02739D7C259B}
+		{578915BA-F7EE-4EA6-8AC6-10046F234C78} = {F27826EF-0231-4CB2-A39A-02739D7C259B}
+		{33B0FCC6-D8BB-42EC-A514-B8A20BA8E48C} = {A248B87E-08D8-4415-9A9B-3F8EB7B3A255}
+	EndGlobalSection
+EndGlobal
