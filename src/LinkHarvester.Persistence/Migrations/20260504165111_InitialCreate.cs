@@ -1,5 +1,4 @@
-﻿using System;
-using Microsoft.EntityFrameworkCore.Migrations;
+﻿using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
@@ -34,8 +33,8 @@ namespace LinkHarvester.Persistence.Migrations
                     Id = table.Column<int>(type: "INTEGER", nullable: false)
                         .Annotation("Sqlite:Autoincrement", true),
                     SourceId = table.Column<string>(type: "TEXT", nullable: false),
-                    StartedAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: false),
-                    FinishedAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: true),
+                    StartedAt = table.Column<long>(type: "INTEGER", nullable: false),
+                    FinishedAt = table.Column<long>(type: "INTEGER", nullable: true),
                     Discovered = table.Column<int>(type: "INTEGER", nullable: false),
                     NewArticles = table.Column<int>(type: "INTEGER", nullable: false),
                     Resolved = table.Column<int>(type: "INTEGER", nullable: false),
@@ -61,8 +60,8 @@ namespace LinkHarvester.Persistence.Migrations
                     SeasonNumber = table.Column<int>(type: "INTEGER", nullable: true),
                     Status = table.Column<int>(type: "INTEGER", nullable: false),
                     BestSubmittedQualityScore = table.Column<int>(type: "INTEGER", nullable: true),
-                    CreatedAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: false),
-                    UpdatedAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: false)
+                    CreatedAt = table.Column<long>(type: "INTEGER", nullable: false),
+                    UpdatedAt = table.Column<long>(type: "INTEGER", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -88,15 +87,15 @@ namespace LinkHarvester.Persistence.Migrations
                     Language = table.Column<string>(type: "TEXT", nullable: true),
                     SizeBytes = table.Column<long>(type: "INTEGER", nullable: true),
                     EpisodeCount = table.Column<int>(type: "INTEGER", nullable: true),
-                    DlProtectUrl = table.Column<string>(type: "TEXT", maxLength: 1024, nullable: false),
+                    AggregatorDlProtectUrl = table.Column<string>(type: "TEXT", maxLength: 1024, nullable: false),
                     HostersJson = table.Column<string>(type: "TEXT", nullable: false),
                     ContentHash = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
                     Status = table.Column<int>(type: "INTEGER", nullable: false),
                     FailureReason = table.Column<string>(type: "TEXT", nullable: true),
                     ResolutionAttempts = table.Column<int>(type: "INTEGER", nullable: false),
-                    DiscoveredAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: false),
-                    ResolvedAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: true),
-                    SubmittedAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: true)
+                    DiscoveredAt = table.Column<long>(type: "INTEGER", nullable: false),
+                    ResolvedAt = table.Column<long>(type: "INTEGER", nullable: true),
+                    SubmittedAt = table.Column<long>(type: "INTEGER", nullable: true)
                 },
                 constraints: table =>
                 {
@@ -119,7 +118,7 @@ namespace LinkHarvester.Persistence.Migrations
                     Hoster = table.Column<string>(type: "TEXT", maxLength: 64, nullable: false),
                     Url = table.Column<string>(type: "TEXT", maxLength: 2048, nullable: false),
                     EpisodeIndex = table.Column<int>(type: "INTEGER", nullable: true),
-                    ResolvedAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: false)
+                    ResolvedAt = table.Column<long>(type: "INTEGER", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -143,7 +142,7 @@ namespace LinkHarvester.Persistence.Migrations
                     DsmTaskIdsJson = table.Column<string>(type: "TEXT", nullable: false),
                     Status = table.Column<int>(type: "INTEGER", nullable: false),
                     ResponseMessage = table.Column<string>(type: "TEXT", nullable: true),
-                    SubmittedAt = table.Column<DateTimeOffset>(type: "TEXT", nullable: false)
+                    SubmittedAt = table.Column<long>(type: "INTEGER", nullable: false)
                 },
                 constraints: table =>
                 {

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace LinkHarvester.Persistence;
 
@@ -12,6 +13,13 @@ public class HarvesterDbContext : DbContext
     public DbSet<SubmissionEntity> Submissions => Set<SubmissionEntity>();
     public DbSet<ScanRunEntity> ScanRuns => Set<ScanRunEntity>();
     public DbSet<CapSolverSpendEntity> CapSolverSpends => Set<CapSolverSpendEntity>();
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder cfg)
+    {
+        // SQLite cannot ORDER BY DateTimeOffset; persist as long (UnixTimeMilliseconds).
+        cfg.Properties<DateTimeOffset>().HaveConversion<DateTimeOffsetToBinaryConverter>();
+        cfg.Properties<DateTimeOffset?>().HaveConversion<DateTimeOffsetToBinaryConverter>();
+    }
 
     protected override void OnModelCreating(ModelBuilder b)
     {

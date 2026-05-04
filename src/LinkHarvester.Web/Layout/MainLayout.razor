@@ -1,16 +1,48 @@
 ﻿@inherits LayoutComponentBase
-<div class="page">
-    <div class="sidebar">
-        <NavMenu />
-    </div>
+@inject HarvesterApi Api
+@inject NavigationManager Nav
 
-    <main>
-        <div class="top-row px-4">
-            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
-        </div>
-
-        <article class="content px-4">
-            @Body
-        </article>
+<div class="lh-shell">
+    <header class="lh-header">
+        <div class="lh-brand">Link Harvester</div>
+        <div class="lh-spacer"></div>
+        @if (_authChecked && _authed)
+        {
+            <button class="lh-iconbtn" @onclick="ScanNow" title="Scan now">
+                <span class="lh-icon">⟳</span>
+            </button>
+            <button class="lh-iconbtn" @onclick="Logout" title="Logout">
+                <span class="lh-icon">⎋</span>
+            </button>
+        }
+    </header>
+    <main class="lh-main">
+        @Body
     </main>
 </div>
+
+@code {
+    private bool _authChecked;
+    private bool _authed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _authed = await Api.IsAuthenticatedAsync();
+        _authChecked = true;
+        if (!_authed && !Nav.Uri.Contains("/login", StringComparison.OrdinalIgnoreCase))
+        {
+            Nav.NavigateTo("/login");
+        }
+    }
+
+    private async Task ScanNow()
+    {
+        await Api.TriggerScanAsync();
+    }
+
+    private async Task Logout()
+    {
+        await Api.LogoutAsync();
+        Nav.NavigateTo("/login", forceLoad: true);
+    }
+}

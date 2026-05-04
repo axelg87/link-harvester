@@ -1,0 +1,60 @@
+@page "/login"
+@inject HarvesterApi Api
+@inject NavigationManager Nav
+
+<PageTitle>Sign in</PageTitle>
+
+<div class="lh-login">
+    <h1>Sign in</h1>
+    <EditForm Model="_form" OnValidSubmit="Submit">
+        <label class="lh-field">
+            <span>Username</span>
+            <InputText @bind-Value="_form.Username" autocomplete="username" />
+        </label>
+        <label class="lh-field">
+            <span>Password</span>
+            <InputText @bind-Value="_form.Password" type="password" autocomplete="current-password" />
+        </label>
+        @if (_error is not null)
+        {
+            <p class="lh-error">@_error</p>
+        }
+        <button class="lh-primary" type="submit" disabled="@_busy">
+            @(_busy ? "Signing in…" : "Sign in")
+        </button>
+    </EditForm>
+</div>
+
+@code {
+    private LoginForm _form = new();
+    private string? _error;
+    private bool _busy;
+
+    private async Task Submit()
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            var ok = await Api.LoginAsync(_form.Username, _form.Password);
+            if (ok)
+            {
+                Nav.NavigateTo("/", forceLoad: true);
+            }
+            else
+            {
+                _error = "Invalid credentials.";
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private sealed class LoginForm
+    {
+        public string Username { get; set; } = "";
+        public string Password { get; set; } = "";
+    }
+}

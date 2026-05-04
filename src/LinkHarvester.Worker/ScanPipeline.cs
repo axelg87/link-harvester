@@ -143,7 +143,13 @@ public sealed class ScanPipeline
             title.UpdatedAt = DateTimeOffset.UtcNow;
         }
 
-        var rating = _scorer.Score(details.QualityLabel, details.Language);
+        // Fall back to listing-card hints if the article body lacked a header.
+        var qualityLabel = details.QualityLabel
+            ?? listItem.QualityHint
+            ?? listItem.LanguageHint;
+        var language = details.Language ?? listItem.LanguageHint;
+
+        var rating = _scorer.Score(qualityLabel, language);
 
         var article = existing ?? new ArticleEntity
         {
@@ -154,12 +160,12 @@ public sealed class ScanPipeline
         };
         article.TitleId = title.Id;
         article.DisplayTitle = details.Title;
-        article.QualityLabel = details.QualityLabel;
+        article.QualityLabel = qualityLabel;
         article.QualityScore = rating.Score;
         article.Resolution = rating.Resolution;
         article.Codec = rating.Codec;
         article.SourceTier = rating.Source;
-        article.Language = rating.Language;
+        article.Language = language ?? rating.Language;
         article.SizeBytes = details.SizeBytes;
         article.EpisodeCount = details.EpisodeCount;
         article.AggregatorDlProtectUrl = details.AggregatorDlProtectUrl;

@@ -11,7 +11,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace LinkHarvester.Persistence.Migrations
 {
     [DbContext(typeof(HarvesterDbContext))]
-    [Migration("20260504162705_InitialCreate")]
+    [Migration("20260504165111_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -26,6 +26,11 @@ namespace LinkHarvester.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("AggregatorDlProtectUrl")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Codec")
                         .HasColumnType("TEXT");
 
@@ -34,16 +39,11 @@ namespace LinkHarvester.Persistence.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("DiscoveredAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long>("DiscoveredAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("DisplayTitle")
                         .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("DlProtectUrl")
-                        .IsRequired()
-                        .HasMaxLength(1024)
                         .HasColumnType("TEXT");
 
                     b.Property<int?>("EpisodeCount")
@@ -76,8 +76,8 @@ namespace LinkHarvester.Persistence.Migrations
                     b.Property<int>("ResolutionAttempts")
                         .HasColumnType("INTEGER");
 
-                    b.Property<DateTimeOffset?>("ResolvedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long?>("ResolvedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<long?>("SizeBytes")
                         .HasColumnType("INTEGER");
@@ -93,8 +93,8 @@ namespace LinkHarvester.Persistence.Migrations
                     b.Property<int>("Status")
                         .HasColumnType("INTEGER");
 
-                    b.Property<DateTimeOffset?>("SubmittedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long?>("SubmittedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("TitleId")
                         .HasColumnType("INTEGER");
@@ -159,8 +159,8 @@ namespace LinkHarvester.Persistence.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("ResolvedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long>("ResolvedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Url")
                         .IsRequired()
@@ -186,8 +186,8 @@ namespace LinkHarvester.Persistence.Migrations
                     b.Property<int>("Failed")
                         .HasColumnType("INTEGER");
 
-                    b.Property<DateTimeOffset?>("FinishedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long?>("FinishedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int>("NewArticles")
                         .HasColumnType("INTEGER");
@@ -202,8 +202,8 @@ namespace LinkHarvester.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("StartedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long>("StartedAt")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -231,8 +231,8 @@ namespace LinkHarvester.Persistence.Migrations
                     b.Property<int>("Status")
                         .HasColumnType("INTEGER");
 
-                    b.Property<DateTimeOffset>("SubmittedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long>("SubmittedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("SubmittedUrlsJson")
                         .IsRequired()
@@ -259,8 +259,8 @@ namespace LinkHarvester.Persistence.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("DisplayTitle")
                         .IsRequired()
@@ -281,8 +281,8 @@ namespace LinkHarvester.Persistence.Migrations
                     b.Property<int>("Status")
                         .HasColumnType("INTEGER");
 
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("TEXT");
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
 
                     b.Property<int?>("Year")
                         .HasColumnType("INTEGER");

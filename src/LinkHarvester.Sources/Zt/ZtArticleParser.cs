@@ -39,11 +39,13 @@ public sealed class ZtArticleParser
     private static readonly Regex EpisodeLabelRegex =
         new(@"Episode\s*(\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    // "Qualité " (note the trailing space, no 's') followed by ":" or " " then a value, then "|" or "<"
+    // This avoids matching "Qualités également disponibles" which has no following separator.
     private static readonly Regex QualityLineRegex =
-        new(@"Qualité\s*[:\u00A0]?\s*(?<q>[^|\n<\r]+?)\s*(?:\||$|<)", RegexOptions.Compiled);
+        new(@"Qualité\s+(?:</u>\s*)?:\s*(?:</strong>\s*)?(?<q>[^|<\r\n]+?)\s*(?:\||<)", RegexOptions.Compiled);
 
     private static readonly Regex LanguageLineRegex =
-        new(@"Langue\s*[:\u00A0]?\s*(?<l>[^\n<\r]+?)\s*(?:<|$)", RegexOptions.Compiled);
+        new(@"Langue\s+(?:</u>\s*)?:\s*(?:</strong>\s*)?(?<l>[^<\r\n]+?)\s*<", RegexOptions.Compiled);
 
     private static readonly Regex SizeLineRegex =
         new(@"Taille du fichier\s*</u>\s*:\s*</strong>\s*(?<n>[\d.,]+)\s*(?<u>Go|Mo|To|Ko|GB|MB|TB|KB)",
