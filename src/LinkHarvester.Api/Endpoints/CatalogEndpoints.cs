@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using LinkHarvester.Api.Maintenance;
 using LinkHarvester.Core;
 using LinkHarvester.Enrichment;
 using LinkHarvester.Persistence;
@@ -282,6 +283,15 @@ public static class CatalogEndpoints
             var enriched = await db.CatalogTitleMetadata.CountAsync(m =>
                 m.EnrichmentSource == "tmdb_direct" || m.EnrichmentSource == "tmdb_imdb_lookup", ct);
             var failed = await db.CatalogTitleMetadata.CountAsync(m => m.EnrichmentSource == "failed", ct);
+
+            // Subset of the failed bucket that looks like SQLite write
+            // contention or a 30-second command-timeout — i.e. transient
+            // infra noise that the user can safely retry without risking
+            // a wasted TMDB call. Patterns live in EnrichmentMaintenance so
+            // the count, the manual reset endpoint, and the eventual
+            // BUG-2 startup auto-heal stay in lock-step.
+            var transientFailed = await EnrichmentMaintenance.CountTransientFailedAsync(db, ct);
+
             return Results.Ok(new
             {
                 titles,
@@ -289,8 +299,30 @@ public static class CatalogEndpoints
                 episodes,
                 enriched,
                 enrichmentFailed = failed,
+                enrichmentFailedTransient = transientFailed,
                 enrichmentRunState = tmdb.State
             });
+        });
+
+        // Reset enrichment failures so the background enricher will retry
+        // them on its next batch. With ?onlyLockErrors=true (the default),
+        // resets only rows that look like SQLite contention or command
+        // timeout. Without the flag, resets every 'failed' row regardless
+        // of cause.
+        grp.MapPost("/enrichment/reset-failed", async (
+            HarvesterDbContext db,
+            ILoggerFactory loggerFactory,
+            [FromQuery] bool onlyLockErrors = true,
+            CancellationToken ct = default) =>
+        {
+            var log = loggerFactory.CreateLogger("EnrichmentReset");
+            var reset = onlyLockErrors
+                ? await EnrichmentMaintenance.ResetTransientFailedAsync(db, ct)
+                : await EnrichmentMaintenance.ResetAllFailedAsync(db, ct);
+            log.LogInformation(
+                "manual reset: {Count} enrichment failures requeued (onlyLockErrors={Mode})",
+                reset, onlyLockErrors);
+            return Results.Ok(new { reset });
         });
 
         return routes;

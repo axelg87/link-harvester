@@ -151,4 +151,12 @@ public sealed class HarvesterApi
     {
         using var resp = await _http.PostAsync("api/catalog/import/cancel", null, ct);
     }
+
+    public async Task<ResetFailedResult> ResetFailedEnrichmentsAsync(bool onlyLockErrors, CancellationToken ct = default)
+    {
+        var url = $"api/catalog/enrichment/reset-failed?onlyLockErrors={(onlyLockErrors ? "true" : "false")}";
+        using var resp = await _http.PostAsync(url, null, ct);
+        resp.EnsureSuccessStatusCode();
+        return (await resp.Content.ReadFromJsonAsync<ResetFailedResult>(cancellationToken: ct))!;
+    }
 }
