@@ -11,7 +11,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace LinkHarvester.Persistence.Migrations
 {
     [DbContext(typeof(HarvesterDbContext))]
-    [Migration("20260504180210_InitialCreate")]
+    [Migration("20260524090925_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -74,6 +74,17 @@ namespace LinkHarvester.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("TEXT");
+
+                    b.Property<string>("TmdbApiKeyEncrypted")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TmdbEnrichmentConcurrency")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("TmdbEnrichmentEnabled")
+                        .HasColumnType("INTEGER");
 
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
@@ -203,6 +214,301 @@ namespace LinkHarvester.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("CapSolverSpends");
+                });
+
+            modelBuilder.Entity("LinkHarvester.Persistence.Catalog.CatalogEpisodeEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("EpisodeName")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("EpisodeNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("EpisodePoster")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsFullSeason")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SeasonNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TitleId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TitleId", "SeasonNumber", "EpisodeNumber", "IsFullSeason")
+                        .IsUnique();
+
+                    b.ToTable("CatalogEpisodes");
+                });
+
+            modelBuilder.Entity("LinkHarvester.Persistence.Catalog.CatalogImportRunEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("FailedRecords")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("FinishedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("InsertedEpisodes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("InsertedLinks")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("InsertedTitles")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceDescription")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("StartedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("TotalRecords")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("StartedAt");
+
+                    b.ToTable("CatalogImportRuns");
+                });
+
+            modelBuilder.Entity("LinkHarvester.Persistence.Catalog.CatalogLinkEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AudioLangs")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("EpisodeId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("ExternalLinkId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("HostName")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LinkUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NormalizedHost")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("QualityName")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("SizeBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SubLangs")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TitleId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EpisodeId");
+
+                    b.HasIndex("ExternalLinkId")
+                        .IsUnique();
+
+                    b.HasIndex("NormalizedHost");
+
+                    b.HasIndex("QualityName");
+
+                    b.HasIndex("TitleId");
+
+                    b.ToTable("CatalogLinks");
+                });
+
+            modelBuilder.Entity("LinkHarvester.Persistence.Catalog.CatalogTitleEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CanonicalKey")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CategoryName")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("EpisodeCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("FirstSeenAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ImdbId")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("LastSeenAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("LinkCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("NormalizedTitle")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OriginalTitle")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TitleName")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TitlePoster")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("TmdbId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CanonicalKey")
+                        .IsUnique();
+
+                    b.HasIndex("CategoryName");
+
+                    b.HasIndex("ImdbId");
+
+                    b.HasIndex("NormalizedTitle");
+
+                    b.HasIndex("TmdbId");
+
+                    b.ToTable("CatalogTitles");
+                });
+
+            modelBuilder.Entity("LinkHarvester.Persistence.Catalog.CatalogTitleMetadataEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("EnrichmentSource")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GenresJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ImdbId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("LastEnrichedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OriginalLanguage")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Overview")
+                        .HasColumnType("TEXT");
+
+                    b.Property<double?>("Popularity")
+                        .HasColumnType("REAL");
+
+                    b.Property<string>("ReleaseDate")
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("Runtime")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Status")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TitleId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("TmdbId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double?>("VoteAverage")
+                        .HasColumnType("REAL");
+
+                    b.Property<int?>("VoteCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("Year")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EnrichmentSource");
+
+                    b.HasIndex("TitleId")
+                        .IsUnique();
+
+                    b.HasIndex("Year");
+
+                    b.ToTable("CatalogTitleMetadata");
                 });
 
             modelBuilder.Entity("LinkHarvester.Persistence.ResolvedLinkEntity", b =>
@@ -371,6 +677,46 @@ namespace LinkHarvester.Persistence.Migrations
                     b.Navigation("Title");
                 });
 
+            modelBuilder.Entity("LinkHarvester.Persistence.Catalog.CatalogEpisodeEntity", b =>
+                {
+                    b.HasOne("LinkHarvester.Persistence.Catalog.CatalogTitleEntity", "Title")
+                        .WithMany("Episodes")
+                        .HasForeignKey("TitleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Title");
+                });
+
+            modelBuilder.Entity("LinkHarvester.Persistence.Catalog.CatalogLinkEntity", b =>
+                {
+                    b.HasOne("LinkHarvester.Persistence.Catalog.CatalogEpisodeEntity", "Episode")
+                        .WithMany("Links")
+                        .HasForeignKey("EpisodeId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("LinkHarvester.Persistence.Catalog.CatalogTitleEntity", "Title")
+                        .WithMany("Links")
+                        .HasForeignKey("TitleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Episode");
+
+                    b.Navigation("Title");
+                });
+
+            modelBuilder.Entity("LinkHarvester.Persistence.Catalog.CatalogTitleMetadataEntity", b =>
+                {
+                    b.HasOne("LinkHarvester.Persistence.Catalog.CatalogTitleEntity", "Title")
+                        .WithOne("Metadata")
+                        .HasForeignKey("LinkHarvester.Persistence.Catalog.CatalogTitleMetadataEntity", "TitleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Title");
+                });
+
             modelBuilder.Entity("LinkHarvester.Persistence.ResolvedLinkEntity", b =>
                 {
                     b.HasOne("LinkHarvester.Persistence.ArticleEntity", "Article")
@@ -396,6 +742,20 @@ namespace LinkHarvester.Persistence.Migrations
             modelBuilder.Entity("LinkHarvester.Persistence.ArticleEntity", b =>
                 {
                     b.Navigation("ResolvedLinks");
+                });
+
+            modelBuilder.Entity("LinkHarvester.Persistence.Catalog.CatalogEpisodeEntity", b =>
+                {
+                    b.Navigation("Links");
+                });
+
+            modelBuilder.Entity("LinkHarvester.Persistence.Catalog.CatalogTitleEntity", b =>
+                {
+                    b.Navigation("Episodes");
+
+                    b.Navigation("Links");
+
+                    b.Navigation("Metadata");
                 });
 
             modelBuilder.Entity("LinkHarvester.Persistence.TitleEntity", b =>

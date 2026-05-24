@@ -26,7 +26,10 @@ public sealed class SettingsService : ISettingsService
         ScanOnStartup: true,
         HosterPriority: new[] { "1fichier", "Rapidgator" },
         AuthUsername: "admin",
-        AuthPassword: "change-me");
+        AuthPassword: "change-me",
+        TmdbApiKey: "",
+        TmdbEnrichmentEnabled: true,
+        TmdbEnrichmentConcurrency: 4);
 
     public SettingsService(IDbContextFactory<HarvesterDbContext> factory,
                            IDataProtectionProvider dpProvider,
@@ -78,6 +81,11 @@ public sealed class SettingsService : ISettingsService
         row.AuthUsername = string.IsNullOrWhiteSpace(updated.AuthUsername) ? row.AuthUsername : updated.AuthUsername;
         if (!string.IsNullOrEmpty(updated.AuthPassword))
             row.AuthPasswordEncrypted = _protector.Protect(updated.AuthPassword);
+
+        if (!string.IsNullOrEmpty(updated.TmdbApiKey))
+            row.TmdbApiKeyEncrypted = _protector.Protect(updated.TmdbApiKey);
+        row.TmdbEnrichmentEnabled = updated.TmdbEnrichmentEnabled;
+        row.TmdbEnrichmentConcurrency = Math.Clamp(updated.TmdbEnrichmentConcurrency, 1, 8);
 
         row.UpdatedAt = DateTimeOffset.UtcNow;
 
@@ -147,7 +155,10 @@ public sealed class SettingsService : ISettingsService
         HosterPriority: row.HosterPriorityCsv
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
         AuthUsername: row.AuthUsername,
-        AuthPassword: SafeUnprotect(row.AuthPasswordEncrypted));
+        AuthPassword: SafeUnprotect(row.AuthPasswordEncrypted),
+        TmdbApiKey: SafeUnprotect(row.TmdbApiKeyEncrypted),
+        TmdbEnrichmentEnabled: row.TmdbEnrichmentEnabled,
+        TmdbEnrichmentConcurrency: row.TmdbEnrichmentConcurrency <= 0 ? 4 : row.TmdbEnrichmentConcurrency);
 
     private string SafeUnprotect(string ciphertext)
     {

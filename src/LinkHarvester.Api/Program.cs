@@ -1,7 +1,9 @@
 using LinkHarvester.Api.Auth;
 using LinkHarvester.Api.Endpoints;
 using LinkHarvester.Core;
+using LinkHarvester.Enrichment;
 using LinkHarvester.Persistence;
+using LinkHarvester.Persistence.Catalog;
 using LinkHarvester.Resolution;
 using LinkHarvester.Sources;
 using LinkHarvester.Synology;
@@ -64,6 +66,23 @@ builder.Services.AddHarvesterSources();
 builder.Services.AddHarvesterResolution(builder.Configuration);
 builder.Services.AddHarvesterSynology();
 builder.Services.AddHarvesterWorker(builder.Configuration);
+builder.Services.AddCatalogIngestion();
+builder.Services.AddCatalogEnrichment();
+
+// Multi-GB uploads for the catalog dump.
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(o =>
+{
+    o.MultipartBodyLengthLimit = long.MaxValue;
+    o.ValueLengthLimit = int.MaxValue;
+});
+builder.WebHost.ConfigureKestrel(opts => opts.Limits.MaxRequestBodySize = null);
+
+// Named HttpClient used by /api/catalog/import/from-url.
+builder.Services.AddHttpClient("import", c =>
+{
+    c.Timeout = TimeSpan.FromHours(2);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("LinkHarvester/1.0");
+});
 
 var app = builder.Build();
 
@@ -71,6 +90,7 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<HarvesterDbContext>();
     db.Database.Migrate();
+    CatalogFts.EnsureCreated(db);
     var settings = scope.ServiceProvider.GetRequiredService<ISettingsService>();
     await settings.LoadAsync(CancellationToken.None);
 }
@@ -85,6 +105,8 @@ app.UseAuthorization();
 app.MapAuthEndpoints();
 app.MapHarvesterEndpoints();
 app.MapSettingsEndpoints();
+app.MapCatalogEndpoints();
+app.MapCatalogImportEndpoints();
 
 app.MapFallbackToFile("index.html");
 

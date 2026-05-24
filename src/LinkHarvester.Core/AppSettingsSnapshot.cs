@@ -18,7 +18,11 @@ public sealed record AppSettingsSnapshot(
     IReadOnlyList<string> HosterPriority,
     // Auth
     string AuthUsername,
-    string AuthPassword);
+    string AuthPassword,
+    // TMDB enrichment
+    string TmdbApiKey,
+    bool TmdbEnrichmentEnabled,
+    int TmdbEnrichmentConcurrency);
 
 public interface ISettingsService
 {

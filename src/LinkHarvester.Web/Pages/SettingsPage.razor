@@ -1,4 +1,5 @@
 @page "/settings"
+@implements IDisposable
 @inject HarvesterApi Api
 @inject NavigationManager Nav
 
@@ -93,6 +94,87 @@
             </section>
 
             <section class="lh-section">
+                <h2>Catalog: TMDB enrichment</h2>
+                <p class="lh-muted">
+                    Year, genre, rating, runtime and language filters need TMDB metadata.
+                    Sign up free at
+                    <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org/settings/api</a>
+                    and paste the API key (v3) below. The background enricher will work
+                    through your catalog automatically; you can keep using the app.
+                </p>
+                <label class="lh-field">
+                    <span>TMDB API key (leave blank to keep)</span>
+                    <InputText @bind-Value="_form.TmdbApiKey" type="password" autocomplete="off" />
+                </label>
+                <label class="lh-field lh-field-row">
+                    <InputCheckbox @bind-Value="_form.TmdbEnrichmentEnabled" />
+                    <span>Enable background enrichment</span>
+                </label>
+                <label class="lh-field">
+                    <span>Parallel workers (1-8)</span>
+                    <InputNumber @bind-Value="_form.TmdbEnrichmentConcurrency" min="1" max="8" />
+                </label>
+
+                @if (_catalogStats is not null)
+                {
+                    <div class="lh-row lh-stats">
+                        <span><strong>@_catalogStats.Titles.ToString("N0")</strong> titles</span>
+                        <span><strong>@_catalogStats.Links.ToString("N0")</strong> links</span>
+                        <span><strong>@_catalogStats.Enriched.ToString("N0")</strong> enriched</span>
+                        <span><strong>@_catalogStats.EnrichmentFailed.ToString("N0")</strong> failed</span>
+                        <span class="lh-muted">enricher: @_catalogStats.EnrichmentRunState</span>
+                    </div>
+                }
+            </section>
+
+            <section class="lh-section">
+                <h2>Catalog: import</h2>
+                <p class="lh-muted">Upload a Hydracker-style JSON dump (one array of records or one JSON per line, .json or .json.gz).</p>
+
+                <div class="lh-field">
+                    <span>Import from public URL (Google Drive supported)</span>
+                    <div class="lh-row">
+                        <input type="text" @bind="_importUrl" placeholder="https://drive.google.com/file/d/.../view" />
+                        <button type="button" class="lh-primary" @onclick="StartImportFromUrl" disabled="@(_ingestion?.State == "running")">
+                            Start import
+                        </button>
+                    </div>
+                </div>
+
+                <div class="lh-field">
+                    <span>Or upload a local file</span>
+                    <InputFile OnChange="OnFilePicked" disabled="@(_ingestion?.State == "running" || _uploading)" />
+                </div>
+
+                @if (_uploading)
+                {
+                    <p class="lh-muted">Uploading… @($"{_uploadedBytes / 1024d / 1024:0.0} MB")</p>
+                }
+                @if (_ingestion is not null)
+                {
+                    <div class="lh-row lh-stats">
+                        <span>state: <strong>@_ingestion.State</strong></span>
+                        <span><strong>@_ingestion.Progress.Read.ToString("N0")</strong> records read</span>
+                        <span><strong>@_ingestion.Progress.Titles.ToString("N0")</strong> titles</span>
+                        <span><strong>@_ingestion.Progress.Episodes.ToString("N0")</strong> episodes</span>
+                        <span><strong>@_ingestion.Progress.Links.ToString("N0")</strong> links</span>
+                        @if (_ingestion.Progress.Failed > 0)
+                        {
+                            <span class="lh-error">@_ingestion.Progress.Failed.ToString("N0") failed</span>
+                        }
+                    </div>
+                    @if (!string.IsNullOrEmpty(_ingestion.Error))
+                    {
+                        <p class="lh-error">@_ingestion.Error</p>
+                    }
+                    @if (_ingestion.State == "running")
+                    {
+                        <button class="lh-secondary" type="button" @onclick="CancelImport">Cancel import</button>
+                    }
+                }
+            </section>
+
+            <section class="lh-section">
                 <h2>Login (this app)</h2>
                 <p class="lh-muted">Used to access this website.</p>
                 <label class="lh-field">
@@ -129,6 +211,13 @@
     private Settings? _existing;
     private FormModel? _form;
 
+    private CatalogStats? _catalogStats;
+    private IngestionStatus? _ingestion;
+    private string _importUrl = string.Empty;
+    private bool _uploading;
+    private long _uploadedBytes;
+    private System.Threading.Timer? _poller;
+
     protected override async Task OnInitializedAsync()
     {
         try
@@ -142,6 +231,102 @@
             _isError = true;
         }
         finally { _loading = false; }
+        await RefreshCatalogStatus();
+        _poller = new System.Threading.Timer(async _ =>
+        {
+            try { await InvokeAsync(RefreshCatalogStatus); }
+            catch { }
+        }, null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
+    }
+
+    public void Dispose() => _poller?.Dispose();
+
+    private async Task RefreshCatalogStatus()
+    {
+        try
+        {
+            _catalogStats = await Api.GetCatalogStatsAsync();
+            _ingestion = await Api.GetIngestionStatusAsync();
+            StateHasChanged();
+        }
+        catch { /* unauth or transient */ }
+    }
+
+    private async Task StartImportFromUrl()
+    {
+        if (string.IsNullOrWhiteSpace(_importUrl)) return;
+        try
+        {
+            await Api.ImportFromUrlAsync(_importUrl);
+            _message = "Import started. Watch progress below.";
+            _isError = false;
+        }
+        catch (Exception ex)
+        {
+            _message = "Failed to start import: " + ex.Message;
+            _isError = true;
+        }
+        await RefreshCatalogStatus();
+    }
+
+    private async Task OnFilePicked(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file is null) return;
+        _uploading = true;
+        _uploadedBytes = 0;
+        try
+        {
+            await using var src = file.OpenReadStream(maxAllowedSize: long.MaxValue);
+            var counter = new CountingReadStream(src, n => _uploadedBytes += n);
+            var resp = await Api.UploadCatalogFileAsync(counter, file.Name);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _message = $"Upload failed: HTTP {(int)resp.StatusCode}";
+                _isError = true;
+            }
+            else
+            {
+                _message = "Upload received. Ingestion started.";
+                _isError = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _message = "Upload failed: " + ex.Message;
+            _isError = true;
+        }
+        finally
+        {
+            _uploading = false;
+            await RefreshCatalogStatus();
+        }
+    }
+
+    private async Task CancelImport()
+    {
+        await Api.CancelIngestionAsync();
+        await RefreshCatalogStatus();
+    }
+
+    private sealed class CountingReadStream : Stream
+    {
+        private readonly Stream _inner;
+        private readonly Action<long> _onRead;
+        public CountingReadStream(Stream inner, Action<long> onRead) { _inner = inner; _onRead = onRead; }
+        public override bool CanRead => _inner.CanRead;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => _inner.Length;
+        public override long Position { get => _inner.Position; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count)
+        { var n = _inner.Read(buffer, offset, count); if (n > 0) _onRead(n); return n; }
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        { var n = await _inner.ReadAsync(buffer, ct); if (n > 0) _onRead(n); return n; }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private async Task Save()
@@ -197,6 +382,9 @@
         public List<string> HosterPriority { get; set; } = new();
         public string AuthUsername { get; set; } = "";
         public string AuthPassword { get; set; } = "";
+        public string TmdbApiKey { get; set; } = "";
+        public bool TmdbEnrichmentEnabled { get; set; } = true;
+        public int TmdbEnrichmentConcurrency { get; set; } = 4;
 
         public static FormModel From(Settings s) => new()
         {
@@ -210,7 +398,10 @@
             ScanOnStartup = s.ScanOnStartup,
             HosterPriority = s.HosterPriority.ToList(),
             AuthUsername = s.AuthUsername,
-            AuthPassword = ""
+            AuthPassword = "",
+            TmdbApiKey = "",
+            TmdbEnrichmentEnabled = s.TmdbEnrichmentEnabled,
+            TmdbEnrichmentConcurrency = s.TmdbEnrichmentConcurrency
         };
 
         public UpdateSettings ToUpdate() => new(
@@ -224,6 +415,9 @@
             ScanOnStartup: ScanOnStartup,
             HosterPriority: HosterPriority.Where(h => !string.IsNullOrWhiteSpace(h)).ToList(),
             AuthUsername: AuthUsername,
-            AuthPassword: AuthPassword);
+            AuthPassword: AuthPassword,
+            TmdbApiKey: TmdbApiKey,
+            TmdbEnrichmentEnabled: TmdbEnrichmentEnabled,
+            TmdbEnrichmentConcurrency: TmdbEnrichmentConcurrency);
     }
 }

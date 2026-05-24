@@ -1,0 +1,39 @@
+# Fly.io application config for Link Harvester.
+# Single instance, single small VM. SQLite + DataProtection key ring live on
+# a persistent volume so settings + catalog + scan history survive restarts.
+
+app = "link-harvester"
+primary_region = "bom"  # Mumbai — closest Fly region to the user's UAE NAS.
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  ASPNETCORE_URLS = "http://+:8080"
+  ASPNETCORE_ENVIRONMENT = "Production"
+  DOTNET_RUNNING_IN_CONTAINER = "true"
+  # Use the persistent volume mount as the data directory.
+  Persistence__DbPath = "/data/linkharvester.db"
+
+[[mounts]]
+  source = "harvester_data"
+  destination = "/data"
+  initial_size = "3gb"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"        # background scheduler + enricher must keep running
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 500
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+  # 1 GB is comfortably above what the ingestion needs (streamed, ~150 MB peak),
+  # and gives EF Core room for the FTS rebuild + filter queries on a 2M-row table.

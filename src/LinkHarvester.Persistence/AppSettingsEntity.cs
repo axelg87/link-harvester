@@ -27,5 +27,10 @@ public class AppSettingsEntity
     public string AuthUsername { get; set; } = "admin";
     public string AuthPasswordEncrypted { get; set; } = string.Empty;
 
+    // Catalog enrichment
+    public string TmdbApiKeyEncrypted { get; set; } = string.Empty;
+    public bool TmdbEnrichmentEnabled { get; set; } = true;
+    public int TmdbEnrichmentConcurrency { get; set; } = 4;
+
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

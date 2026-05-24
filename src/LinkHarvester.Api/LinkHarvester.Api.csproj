@@ -8,6 +8,7 @@
     <ProjectReference Include="..\LinkHarvester.Synology\LinkHarvester.Synology.csproj" />
     <ProjectReference Include="..\LinkHarvester.Worker\LinkHarvester.Worker.csproj" />
     <ProjectReference Include="..\LinkHarvester.Web\LinkHarvester.Web.csproj" />
+    <ProjectReference Include="..\LinkHarvester.Enrichment\LinkHarvester.Enrichment.csproj" />
   </ItemGroup>
 
   <ItemGroup>

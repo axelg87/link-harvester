@@ -1,3 +1,4 @@
+using LinkHarvester.Persistence.Catalog;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
@@ -14,6 +15,12 @@ public class HarvesterDbContext : DbContext
     public DbSet<ScanRunEntity> ScanRuns => Set<ScanRunEntity>();
     public DbSet<CapSolverSpendEntity> CapSolverSpends => Set<CapSolverSpendEntity>();
     public DbSet<AppSettingsEntity> AppSettings => Set<AppSettingsEntity>();
+
+    public DbSet<CatalogTitleEntity> CatalogTitles => Set<CatalogTitleEntity>();
+    public DbSet<CatalogEpisodeEntity> CatalogEpisodes => Set<CatalogEpisodeEntity>();
+    public DbSet<CatalogLinkEntity> CatalogLinks => Set<CatalogLinkEntity>();
+    public DbSet<CatalogTitleMetadataEntity> CatalogTitleMetadata => Set<CatalogTitleMetadataEntity>();
+    public DbSet<CatalogImportRunEntity> CatalogImportRuns => Set<CatalogImportRunEntity>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder cfg)
     {
@@ -82,6 +89,74 @@ public class HarvesterDbContext : DbContext
             e.Property(s => s.HosterPriorityCsv).HasMaxLength(512);
             e.Property(s => s.SynologyMovieDestination).HasMaxLength(256);
             e.Property(s => s.SynologySeriesDestination).HasMaxLength(256);
+            e.Property(s => s.TmdbApiKeyEncrypted).HasMaxLength(2048);
+        });
+
+        b.Entity<CatalogTitleEntity>(e =>
+        {
+            e.HasIndex(t => t.CanonicalKey).IsUnique();
+            e.HasIndex(t => t.NormalizedTitle);
+            e.HasIndex(t => t.TmdbId);
+            e.HasIndex(t => t.ImdbId);
+            e.HasIndex(t => t.CategoryName);
+            e.Property(t => t.CanonicalKey).HasMaxLength(256);
+            e.Property(t => t.TitleName).HasMaxLength(512);
+            e.Property(t => t.OriginalTitle).HasMaxLength(512);
+            e.Property(t => t.NormalizedTitle).HasMaxLength(512);
+            e.Property(t => t.ImdbId).HasMaxLength(32);
+            e.Property(t => t.CategoryName).HasMaxLength(64);
+            e.Property(t => t.TitlePoster).HasMaxLength(512);
+        });
+
+        b.Entity<CatalogEpisodeEntity>(e =>
+        {
+            e.HasIndex(ep => new { ep.TitleId, ep.SeasonNumber, ep.EpisodeNumber, ep.IsFullSeason }).IsUnique();
+            e.Property(ep => ep.EpisodeName).HasMaxLength(512);
+            e.Property(ep => ep.EpisodePoster).HasMaxLength(512);
+            e.HasOne(ep => ep.Title).WithMany(t => t.Episodes).HasForeignKey(ep => ep.TitleId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<CatalogLinkEntity>(e =>
+        {
+            e.HasIndex(l => l.ExternalLinkId).IsUnique();
+            e.HasIndex(l => l.TitleId);
+            e.HasIndex(l => l.EpisodeId);
+            e.HasIndex(l => l.NormalizedHost);
+            e.HasIndex(l => l.QualityName);
+            e.Property(l => l.LinkUrl).HasMaxLength(2048);
+            e.Property(l => l.HostName).HasMaxLength(64);
+            e.Property(l => l.NormalizedHost).HasMaxLength(64);
+            e.Property(l => l.QualityName).HasMaxLength(64);
+            e.Property(l => l.AudioLangs).HasMaxLength(128);
+            e.Property(l => l.SubLangs).HasMaxLength(128);
+            e.HasOne(l => l.Title).WithMany(t => t.Links).HasForeignKey(l => l.TitleId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(l => l.Episode).WithMany(ep => ep.Links).HasForeignKey(l => l.EpisodeId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<CatalogTitleMetadataEntity>(e =>
+        {
+            e.HasIndex(m => m.TitleId).IsUnique();
+            e.HasIndex(m => m.EnrichmentSource);
+            e.HasIndex(m => m.Year);
+            e.Property(m => m.ReleaseDate).HasMaxLength(20);
+            e.Property(m => m.OriginalLanguage).HasMaxLength(16);
+            e.Property(m => m.Status).HasMaxLength(32);
+            e.Property(m => m.EnrichmentSource).HasMaxLength(32);
+            e.Property(m => m.LastError).HasMaxLength(512);
+            e.HasOne(m => m.Title).WithOne(t => t.Metadata).HasForeignKey<CatalogTitleMetadataEntity>(m => m.TitleId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<CatalogImportRunEntity>(e =>
+        {
+            e.HasIndex(r => r.StartedAt);
+            e.Property(r => r.Source).HasMaxLength(32);
+            e.Property(r => r.SourceDescription).HasMaxLength(512);
+            e.Property(r => r.Status).HasMaxLength(32);
+            e.Property(r => r.Notes).HasMaxLength(1024);
         });
     }
 }

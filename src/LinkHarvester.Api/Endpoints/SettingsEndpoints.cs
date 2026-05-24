@@ -22,7 +22,10 @@ public static class SettingsEndpoints
                 ScanOnStartup: c.ScanOnStartup,
                 HosterPriority: c.HosterPriority.ToList(),
                 AuthUsername: c.AuthUsername,
-                AuthPasswordSet: !string.IsNullOrEmpty(c.AuthPassword)
+                AuthPasswordSet: !string.IsNullOrEmpty(c.AuthPassword),
+                TmdbApiKeySet: !string.IsNullOrEmpty(c.TmdbApiKey),
+                TmdbEnrichmentEnabled: c.TmdbEnrichmentEnabled,
+                TmdbEnrichmentConcurrency: c.TmdbEnrichmentConcurrency
             ));
         });
 
@@ -42,7 +45,10 @@ public static class SettingsEndpoints
                 ScanOnStartup = req.ScanOnStartup ?? current.ScanOnStartup,
                 HosterPriority = (req.HosterPriority is { Count: > 0 } ? req.HosterPriority : current.HosterPriority.ToList()),
                 AuthUsername = req.AuthUsername ?? current.AuthUsername,
-                AuthPassword = string.IsNullOrEmpty(req.AuthPassword) ? current.AuthPassword : req.AuthPassword
+                AuthPassword = string.IsNullOrEmpty(req.AuthPassword) ? current.AuthPassword : req.AuthPassword,
+                TmdbApiKey = string.IsNullOrEmpty(req.TmdbApiKey) ? current.TmdbApiKey : req.TmdbApiKey,
+                TmdbEnrichmentEnabled = req.TmdbEnrichmentEnabled ?? current.TmdbEnrichmentEnabled,
+                TmdbEnrichmentConcurrency = req.TmdbEnrichmentConcurrency ?? current.TmdbEnrichmentConcurrency
             };
             await s.UpdateAsync(snapshot, ct);
             return Results.Ok();
@@ -69,11 +75,13 @@ public static class SettingsEndpoints
         string SynologyBaseUrl, string SynologyUsername, bool SynologyPasswordSet,
         string? SynologyOtpCode, string SynologyMovieDestination, string SynologySeriesDestination,
         int ScanIntervalMinutes, bool ScanOnStartup, List<string> HosterPriority,
-        string AuthUsername, bool AuthPasswordSet);
+        string AuthUsername, bool AuthPasswordSet,
+        bool TmdbApiKeySet, bool TmdbEnrichmentEnabled, int TmdbEnrichmentConcurrency);
 
     public sealed record UpdateSettingsDto(
         string? SynologyBaseUrl, string? SynologyUsername, string? SynologyPassword,
         string? SynologyOtpCode, string? SynologyMovieDestination, string? SynologySeriesDestination,
         int? ScanIntervalMinutes, bool? ScanOnStartup, List<string>? HosterPriority,
-        string? AuthUsername, string? AuthPassword);
+        string? AuthUsername, string? AuthPassword,
+        string? TmdbApiKey, bool? TmdbEnrichmentEnabled, int? TmdbEnrichmentConcurrency);
 }

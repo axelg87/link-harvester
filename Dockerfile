@@ -7,8 +7,9 @@ WORKDIR /src
 COPY LinkHarvester.sln ./
 COPY src/ src/
 COPY tests/ tests/
+COPY tools/ tools/
 
-RUN dotnet restore LinkHarvester.sln
+RUN dotnet restore src/LinkHarvester.Api/LinkHarvester.Api.csproj
 RUN dotnet publish src/LinkHarvester.Api/LinkHarvester.Api.csproj \
     -c Release -o /app/publish /p:UseAppHost=false
 

@@ -76,4 +76,79 @@ public sealed class HarvesterApi
         resp.EnsureSuccessStatusCode();
         return (await resp.Content.ReadFromJsonAsync<SynologyTestResult>(cancellationToken: ct))!;
     }
+
+    // ── Catalog ───────────────────────────────────────────────────────────
+    public async Task<CatalogStats> GetCatalogStatsAsync(CancellationToken ct = default)
+        => (await _http.GetFromJsonAsync<CatalogStats>("api/catalog/stats", ct))!;
+
+    public async Task<CatalogFacets> GetCatalogFacetsAsync(CancellationToken ct = default)
+        => (await _http.GetFromJsonAsync<CatalogFacets>("api/catalog/facets", ct))!;
+
+    public async Task<List<FacetEntry>> GetCatalogGenresAsync(CancellationToken ct = default)
+        => (await _http.GetFromJsonAsync<List<FacetEntry>>("api/catalog/genres", ct)) ?? new();
+
+    public async Task<SearchPage> SearchCatalogAsync(CatalogSearchQuery query, CancellationToken ct = default)
+    {
+        var qs = new List<string>();
+        void Add(string k, string? v) { if (!string.IsNullOrEmpty(v)) qs.Add($"{k}={Uri.EscapeDataString(v)}"); }
+        Add("q", query.Q);
+        Add("category", query.Category);
+        if (query.Hosts.Count > 0) Add("hosts", string.Join(',', query.Hosts));
+        if (query.Qualities.Count > 0) Add("qualities", string.Join(',', query.Qualities));
+        if (query.AudioLangs.Count > 0) Add("audio", string.Join(',', query.AudioLangs));
+        if (query.Genres.Count > 0) Add("genres", string.Join(',', query.Genres));
+        if (query.YearMin.HasValue) Add("yearMin", query.YearMin.ToString());
+        if (query.YearMax.HasValue) Add("yearMax", query.YearMax.ToString());
+        if (query.RatingMin.HasValue) Add("ratingMin", query.RatingMin.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (query.RuntimeMin.HasValue) Add("runtimeMin", query.RuntimeMin.ToString());
+        if (query.RuntimeMax.HasValue) Add("runtimeMax", query.RuntimeMax.ToString());
+        if (query.SizeMinBytes.HasValue) Add("sizeMinBytes", query.SizeMinBytes.ToString());
+        if (query.SizeMaxBytes.HasValue) Add("sizeMaxBytes", query.SizeMaxBytes.ToString());
+        Add("originalLanguage", query.OriginalLanguage);
+        if (query.HasMetadataOnly) Add("hasMetadata", "true");
+        Add("sort", query.Sort);
+        Add("page", query.Page.ToString());
+        Add("pageSize", query.PageSize.ToString());
+
+        var url = "api/catalog/search" + (qs.Count > 0 ? "?" + string.Join('&', qs) : "");
+        return (await _http.GetFromJsonAsync<SearchPage>(url, ct))!;
+    }
+
+    public async Task<TitleDetail?> GetTitleAsync(int id, CancellationToken ct = default)
+    {
+        using var resp = await _http.GetAsync($"api/catalog/titles/{id}", ct);
+        if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        resp.EnsureSuccessStatusCode();
+        return await resp.Content.ReadFromJsonAsync<TitleDetail>(cancellationToken: ct);
+    }
+
+    public async Task<CatalogSendResult> SendCatalogLinksAsync(IEnumerable<int> linkIds, CancellationToken ct = default)
+    {
+        using var resp = await _http.PostAsJsonAsync("api/catalog/links/send", new { linkIds = linkIds.ToList() }, ct);
+        resp.EnsureSuccessStatusCode();
+        return (await resp.Content.ReadFromJsonAsync<CatalogSendResult>(cancellationToken: ct))!;
+    }
+
+    public async Task<IngestionStatus> GetIngestionStatusAsync(CancellationToken ct = default)
+        => (await _http.GetFromJsonAsync<IngestionStatus>("api/catalog/import/status", ct))!;
+
+    public async Task ImportFromUrlAsync(string url, CancellationToken ct = default)
+    {
+        using var resp = await _http.PostAsJsonAsync("api/catalog/import/from-url", new { url }, ct);
+        resp.EnsureSuccessStatusCode();
+    }
+
+    public async Task<HttpResponseMessage> UploadCatalogFileAsync(Stream content, string fileName, CancellationToken ct = default)
+    {
+        using var form = new MultipartFormDataContent();
+        var streamContent = new StreamContent(content);
+        streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        form.Add(streamContent, "file", fileName);
+        return await _http.PostAsync("api/catalog/import/upload", form, ct);
+    }
+
+    public async Task CancelIngestionAsync(CancellationToken ct = default)
+    {
+        using var resp = await _http.PostAsync("api/catalog/import/cancel", null, ct);
+    }
 }

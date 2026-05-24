@@ -1,0 +1,446 @@
+@page "/catalog"
+@inject HarvesterApi Api
+@inject NavigationManager Nav
+
+<PageTitle>Catalog</PageTitle>
+
+<div class="lh-catalog">
+    <header class="lh-catalog-head">
+        <a class="lh-link" href="/">← Inbox</a>
+        <h1>Catalog</h1>
+        @if (_stats is not null)
+        {
+            <span class="lh-muted">@_stats.Titles.ToString("N0") titles · @_stats.Links.ToString("N0") links · @_stats.Enriched.ToString("N0") enriched</span>
+        }
+    </header>
+
+    <div class="lh-catalog-body">
+        <aside class="lh-filters">
+            <div class="lh-search">
+                <input type="text" placeholder="Search titles…" @bind="_query.Q" @bind:event="oninput" @onkeyup="OnSearchKeyUp" />
+            </div>
+
+            @if (_facets is not null)
+            {
+                <details class="lh-filter-group" open>
+                    <summary>Category</summary>
+                    <button class="@CategoryClass(null)" @onclick="() => SetCategory(null)">All</button>
+                    @foreach (var c in _facets.Categories)
+                    {
+                        <button class="@CategoryClass(c.Key)" @onclick="() => SetCategory(c.Key)">@c.Key <span class="lh-count">@c.Count</span></button>
+                    }
+                </details>
+
+                <details class="lh-filter-group" open>
+                    <summary>Year</summary>
+                    <div class="lh-range">
+                        <input type="number" placeholder="from" @bind="_query.YearMin" @bind:after="ScheduleSearch" />
+                        <input type="number" placeholder="to" @bind="_query.YearMax" @bind:after="ScheduleSearch" />
+                    </div>
+                </details>
+
+                <details class="lh-filter-group" open>
+                    <summary>Rating</summary>
+                    <div class="lh-range">
+                        <input type="number" step="0.1" min="0" max="10" placeholder="min" @bind="_query.RatingMin" @bind:after="ScheduleSearch" />
+                    </div>
+                </details>
+
+                <details class="lh-filter-group">
+                    <summary>Genres</summary>
+                    @foreach (var g in _genres)
+                    {
+                        <label class="lh-check">
+                            <input type="checkbox" checked="@_query.Genres.Contains(g.Key)" @onchange="@(e => ToggleSet(_query.Genres, g.Key, (bool)e.Value!))" />
+                            <span>@g.Key</span>
+                            <span class="lh-count">@g.Count</span>
+                        </label>
+                    }
+                </details>
+
+                <details class="lh-filter-group">
+                    <summary>Quality</summary>
+                    @foreach (var q in _facets.Qualities)
+                    {
+                        <label class="lh-check">
+                            <input type="checkbox" checked="@_query.Qualities.Contains(q.Key)" @onchange="@(e => ToggleSet(_query.Qualities, q.Key, (bool)e.Value!))" />
+                            <span>@q.Key</span>
+                            <span class="lh-count">@q.Count</span>
+                        </label>
+                    }
+                </details>
+
+                <details class="lh-filter-group">
+                    <summary>Hoster</summary>
+                    @foreach (var h in _facets.Hosts)
+                    {
+                        <label class="lh-check">
+                            <input type="checkbox" checked="@_query.Hosts.Contains(h.Key.ToLowerInvariant())" @onchange="@(e => ToggleSet(_query.Hosts, h.Key.ToLowerInvariant(), (bool)e.Value!))" />
+                            <span>@h.Key</span>
+                            <span class="lh-count">@h.Count</span>
+                        </label>
+                    }
+                </details>
+
+                <details class="lh-filter-group">
+                    <summary>Audio</summary>
+                    @foreach (var a in _facets.Audio.Take(15))
+                    {
+                        <label class="lh-check">
+                            <input type="checkbox" checked="@_query.AudioLangs.Contains(a.Key)" @onchange="@(e => ToggleSet(_query.AudioLangs, a.Key, (bool)e.Value!))" />
+                            <span>@a.Key</span>
+                            <span class="lh-count">@a.Count</span>
+                        </label>
+                    }
+                </details>
+
+                <details class="lh-filter-group">
+                    <summary>Runtime (minutes)</summary>
+                    <div class="lh-range">
+                        <input type="number" placeholder="from" @bind="_query.RuntimeMin" @bind:after="ScheduleSearch" />
+                        <input type="number" placeholder="to" @bind="_query.RuntimeMax" @bind:after="ScheduleSearch" />
+                    </div>
+                </details>
+
+                <details class="lh-filter-group">
+                    <summary>Size (GB)</summary>
+                    <div class="lh-range">
+                        <input type="number" step="0.1" placeholder="min" @bind="_sizeMinGb" @bind:after="OnSizeChange" />
+                        <input type="number" step="0.1" placeholder="max" @bind="_sizeMaxGb" @bind:after="OnSizeChange" />
+                    </div>
+                </details>
+
+                <details class="lh-filter-group">
+                    <summary>Other</summary>
+                    <label class="lh-check">
+                        <input type="checkbox" @bind="_query.HasMetadataOnly" @bind:after="ScheduleSearch" />
+                        <span>TMDB-enriched only</span>
+                    </label>
+                </details>
+
+                <button class="lh-secondary lh-clear" @onclick="ClearAllFilters">Clear filters</button>
+            }
+        </aside>
+
+        <section class="lh-results">
+            <div class="lh-results-bar">
+                <span class="lh-muted">@(_page?.Total.ToString("N0") ?? "—") results</span>
+                <div class="lh-sort">
+                    <label>Sort:</label>
+                    <select @bind="_query.Sort" @bind:after="ScheduleSearch">
+                        <option value="popularity">Popularity</option>
+                        <option value="year">Year (newest)</option>
+                        <option value="rating">Rating</option>
+                        <option value="title">Title A-Z</option>
+                    </select>
+                </div>
+            </div>
+
+            @if (_searching)
+            {
+                <p class="lh-muted">Searching…</p>
+            }
+            else if (_page is null || _page.Items.Count == 0)
+            {
+                <div class="lh-empty">
+                    <p>No results.</p>
+                    <p class="lh-muted">Try clearing some filters.</p>
+                </div>
+            }
+            else
+            {
+                <div class="lh-grid">
+                    @foreach (var hit in _page.Items)
+                    {
+                        <article class="lh-tile" @onclick="() => OpenTitle(hit.Id)">
+                            <div class="lh-poster">
+                                @if (!string.IsNullOrEmpty(hit.Poster))
+                                {
+                                    <img loading="lazy" src="@hit.Poster" alt="@hit.Title" />
+                                }
+                                else
+                                {
+                                    <div class="lh-poster-fallback">@hit.Category</div>
+                                }
+                                @if (hit.Rating.HasValue)
+                                {
+                                    <span class="lh-rating">@hit.Rating.Value.ToString("0.0")</span>
+                                }
+                            </div>
+                            <div class="lh-tile-body">
+                                <div class="lh-tile-title">@hit.Title</div>
+                                <div class="lh-tile-meta">
+                                    @if (hit.Year.HasValue) { <span>@hit.Year</span> }
+                                    <span class="lh-tag">@hit.Category</span>
+                                </div>
+                                @if (hit.Genres.Count > 0)
+                                {
+                                    <div class="lh-tile-genres">@string.Join(" · ", hit.Genres.Take(3))</div>
+                                }
+                            </div>
+                        </article>
+                    }
+                </div>
+
+                <div class="lh-pager">
+                    <button class="lh-secondary" @onclick="PrevPage" disabled="@(_query.Page <= 1)">← Prev</button>
+                    <span class="lh-muted">Page @_query.Page / @TotalPages</span>
+                    <button class="lh-secondary" @onclick="NextPage" disabled="@(_query.Page >= TotalPages)">Next →</button>
+                </div>
+            }
+        </section>
+    </div>
+</div>
+
+@if (_selectedTitle is not null)
+{
+    <div class="lh-modal" @onclick="CloseTitle">
+        <div class="lh-modal-card" @onclick:stopPropagation="true">
+            <button class="lh-modal-close" @onclick="CloseTitle">✕</button>
+            <header class="lh-modal-head">
+                @if (!string.IsNullOrEmpty(_selectedTitle.Poster))
+                {
+                    <img src="@_selectedTitle.Poster" alt="" class="lh-modal-poster" />
+                }
+                <div>
+                    <h2>@_selectedTitle.Title</h2>
+                    <div class="lh-modal-meta">
+                        @if (_selectedTitle.Year.HasValue) { <span>@_selectedTitle.Year</span> }
+                        @if (_selectedTitle.Rating.HasValue) { <span>★ @_selectedTitle.Rating.Value.ToString("0.0")</span> }
+                        @if (_selectedTitle.Runtime.HasValue) { <span>@_selectedTitle.Runtime min</span> }
+                        <span class="lh-tag">@_selectedTitle.Category</span>
+                    </div>
+                    @if (_selectedTitle.Genres.Count > 0)
+                    {
+                        <div class="lh-muted">@string.Join(" · ", _selectedTitle.Genres)</div>
+                    }
+                </div>
+            </header>
+
+            @if (!string.IsNullOrEmpty(_selectedTitle.Overview))
+            {
+                <p class="lh-overview">@_selectedTitle.Overview</p>
+            }
+
+            @if (_selectedTitle.Links.Count > 0)
+            {
+                <section class="lh-modal-section">
+                    <h3>Links</h3>
+                    <ul class="lh-link-list">
+                        @foreach (var l in _selectedTitle.Links)
+                        {
+                            <li>
+                                <label class="lh-link-row">
+                                    <input type="checkbox" checked="@_selectedLinkIds.Contains(l.Id)" @onchange="@(e => ToggleLink(l.Id, (bool)e.Value!))" />
+                                    <span class="lh-link-host">@l.Host</span>
+                                    @if (!string.IsNullOrEmpty(l.Quality)) { <span class="lh-tag lh-tag-quality">@l.Quality</span> }
+                                    @if (l.SizeBytes.HasValue) { <span class="lh-muted">@FormatSize(l.SizeBytes.Value)</span> }
+                                    @if (!string.IsNullOrEmpty(l.AudioLangs)) { <span class="lh-muted">@l.AudioLangs</span> }
+                                </label>
+                            </li>
+                        }
+                    </ul>
+                </section>
+            }
+
+            @foreach (var ep in _selectedTitle.Episodes)
+            {
+                <section class="lh-modal-section">
+                    <h3>@FormatEpisodeHeader(ep)</h3>
+                    <ul class="lh-link-list">
+                        @foreach (var l in ep.Links)
+                        {
+                            <li>
+                                <label class="lh-link-row">
+                                    <input type="checkbox" checked="@_selectedLinkIds.Contains(l.Id)" @onchange="@(e => ToggleLink(l.Id, (bool)e.Value!))" />
+                                    <span class="lh-link-host">@l.Host</span>
+                                    @if (!string.IsNullOrEmpty(l.Quality)) { <span class="lh-tag lh-tag-quality">@l.Quality</span> }
+                                    @if (l.SizeBytes.HasValue) { <span class="lh-muted">@FormatSize(l.SizeBytes.Value)</span> }
+                                </label>
+                            </li>
+                        }
+                    </ul>
+                </section>
+            }
+
+            <footer class="lh-modal-actions">
+                <span class="lh-muted">@_selectedLinkIds.Count selected</span>
+                <button class="lh-primary" @onclick="SendSelected" disabled="@(_selectedLinkIds.Count == 0 || _sending)">
+                    @(_sending ? "Sending…" : "Send to NAS")
+                </button>
+            </footer>
+            @if (_sendMessage is not null)
+            {
+                <p class="@(_sendOk ? "lh-muted" : "lh-error")">@_sendMessage</p>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private CatalogStats? _stats;
+    private CatalogFacets? _facets;
+    private List<FacetEntry> _genres = new();
+    private CatalogSearchQuery _query = new() { Sort = "popularity", PageSize = 50 };
+    private SearchPage? _page;
+    private double? _sizeMinGb;
+    private double? _sizeMaxGb;
+    private bool _searching;
+    private CancellationTokenSource? _debounce;
+
+    private TitleDetail? _selectedTitle;
+    private HashSet<int> _selectedLinkIds = new();
+    private bool _sending;
+    private bool _sendOk;
+    private string? _sendMessage;
+
+    private int TotalPages => _page is null || _page.PageSize == 0 ? 1 : Math.Max(1, (int)Math.Ceiling(_page.Total / (double)_page.PageSize));
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _stats = await Api.GetCatalogStatsAsync();
+            _facets = await Api.GetCatalogFacetsAsync();
+            _genres = await Api.GetCatalogGenresAsync();
+        }
+        catch { /* unauthenticated -> redirect handled by layout */ }
+        await DoSearch();
+    }
+
+    private async Task DoSearch()
+    {
+        _searching = true;
+        StateHasChanged();
+        try { _page = await Api.SearchCatalogAsync(_query); }
+        catch (Exception ex) { _sendMessage = ex.Message; _sendOk = false; }
+        finally { _searching = false; }
+    }
+
+    private async void ScheduleSearch()
+    {
+        _debounce?.Cancel();
+        _debounce = new CancellationTokenSource();
+        var token = _debounce.Token;
+        try
+        {
+            await Task.Delay(250, token);
+            _query.Page = 1;
+            await InvokeAsync(DoSearch);
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    private void OnSearchKeyUp(KeyboardEventArgs e)
+    {
+        ScheduleSearch();
+    }
+
+    private async Task SetCategory(string? cat)
+    {
+        _query.Category = cat;
+        _query.Page = 1;
+        await DoSearch();
+    }
+
+    private string CategoryClass(string? cat) =>
+        (_query.Category ?? "") == (cat ?? "") ? "lh-chip lh-chip-on" : "lh-chip";
+
+    private void ToggleSet(List<string> set, string value, bool on)
+    {
+        if (on) { if (!set.Contains(value)) set.Add(value); }
+        else set.Remove(value);
+        ScheduleSearch();
+    }
+
+    private void OnSizeChange()
+    {
+        _query.SizeMinBytes = _sizeMinGb.HasValue ? (long)(_sizeMinGb.Value * 1024 * 1024 * 1024) : null;
+        _query.SizeMaxBytes = _sizeMaxGb.HasValue ? (long)(_sizeMaxGb.Value * 1024 * 1024 * 1024) : null;
+        ScheduleSearch();
+    }
+
+    private async Task NextPage()
+    {
+        if (_query.Page < TotalPages) { _query.Page++; await DoSearch(); }
+    }
+
+    private async Task PrevPage()
+    {
+        if (_query.Page > 1) { _query.Page--; await DoSearch(); }
+    }
+
+    private async Task ClearAllFilters()
+    {
+        _query = new CatalogSearchQuery { Sort = _query.Sort, PageSize = _query.PageSize };
+        _sizeMinGb = null; _sizeMaxGb = null;
+        await DoSearch();
+    }
+
+    private async Task OpenTitle(int id)
+    {
+        _selectedTitle = await Api.GetTitleAsync(id);
+        _selectedLinkIds = new HashSet<int>();
+        _sendMessage = null;
+        // Pre-select the best link by hoster priority (1fichier > rapidgator > …) and best quality.
+        if (_selectedTitle is not null)
+        {
+            var best = _selectedTitle.Links
+                .Concat(_selectedTitle.Episodes.SelectMany(e => e.Links))
+                .OrderBy(l => HostRank(l.Host))
+                .ThenByDescending(l => l.SizeBytes ?? 0)
+                .FirstOrDefault();
+            if (best is not null) _selectedLinkIds.Add(best.Id);
+        }
+    }
+
+    private void CloseTitle() => _selectedTitle = null;
+
+    private void ToggleLink(int id, bool on)
+    {
+        if (on) _selectedLinkIds.Add(id); else _selectedLinkIds.Remove(id);
+    }
+
+    private async Task SendSelected()
+    {
+        if (_selectedLinkIds.Count == 0) return;
+        _sending = true;
+        _sendMessage = null;
+        try
+        {
+            var res = await Api.SendCatalogLinksAsync(_selectedLinkIds);
+            _sendOk = res.Ok;
+            _sendMessage = res.Ok
+                ? $"Sent {res.Submitted} link(s) to DSM ({res.TaskIds.Count} task(s) created)."
+                : $"Failed: {res.Error}";
+        }
+        catch (Exception ex) { _sendOk = false; _sendMessage = ex.Message; }
+        finally { _sending = false; }
+    }
+
+    private static string FormatEpisodeHeader(CatalogEpisode ep)
+    {
+        if (ep.IsFullSeason) return $"Season {ep.SeasonNumber} (full)";
+        var label = $"S{ep.SeasonNumber:D2}E{ep.EpisodeNumber:D2}";
+        return string.IsNullOrEmpty(ep.EpisodeName) ? label : $"{label} {ep.EpisodeName}";
+    }
+
+    private static int HostRank(string host)
+    {
+        var h = host.ToLowerInvariant();
+        if (h.Contains("1fichier")) return 0;
+        if (h.Contains("rapidgator")) return 1;
+        if (h.Contains("uploady")) return 2;
+        if (h.Contains("nitroflare")) return 3;
+        return 9;
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        const double GB = 1024d * 1024 * 1024;
+        const double MB = 1024d * 1024;
+        if (bytes >= GB) return $"{bytes / GB:0.0} GB";
+        if (bytes >= MB) return $"{bytes / MB:0.0} MB";
+        return $"{bytes / 1024d:0.0} KB";
+    }
+}
