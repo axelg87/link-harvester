@@ -23,7 +23,7 @@ primary_region = "bom"  # Mumbai — closest Fly region to the user's UAE NAS.
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "off"        # background scheduler + enricher must keep running
+  auto_stop_machines = "off"        # background scheduler + enricher + ingestor must keep running
   auto_start_machines = true
   min_machines_running = 1
 
@@ -32,8 +32,13 @@ primary_region = "bom"  # Mumbai — closest Fly region to the user's UAE NAS.
     soft_limit = 200
     hard_limit = 500
 
+# Disable Fly's HTTP health checks; the catalog ingestion can monopolise the
+# main thread for tens of seconds during commits, which makes the proxy
+# health probe time out and triggers a needless restart cycle.
+# We can re-enable a custom /healthz once the ingestion is offloaded.
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "1gb"
-  # 1 GB is comfortably above what the ingestion needs (streamed, ~150 MB peak),
-  # and gives EF Core room for the FTS rebuild + filter queries on a 2M-row table.
+  memory = "2gb"
+  # 2 GB gives generous headroom for the ingestor's prepared-statement caches,
+  # in-memory titleIds dictionary (~200k entries), and EF Core's tracking
+  # during enrichment, all of which run concurrently with ZT scans.

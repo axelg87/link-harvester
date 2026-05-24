@@ -62,26 +62,79 @@ public static class CatalogImportEndpoints
             var dbDir = Path.GetDirectoryName(Path.GetFullPath(config.GetValue<string>("Persistence:DbPath") ?? "data/linkharvester.db"))!;
             var stagedPath = Path.Combine(dbDir, $"catalog-import-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}.bin");
 
+            // If a previously-downloaded staged file is present (e.g. the machine
+            // restarted mid-ingest), reuse it — the ingest is idempotent thanks to
+            // ON CONFLICT DO NOTHING, so we save a 1+ GB re-download.
+            // Pick by size, not by timestamp: a half-finished re-download is younger
+            // than the full original we want to keep using.
+            var existing = Directory.GetFiles(dbDir, "catalog-import-*.bin")
+                .Select(f => new FileInfo(f))
+                .OrderByDescending(f => f.Length)
+                .FirstOrDefault()?.FullName;
+
             if (!runner.TryStart(async token =>
             {
-                var resolvedUrl = await GoogleDriveDirectAsync(req.Url, httpFactory.CreateClient("import"), log, token);
-                var http = httpFactory.CreateClient("import");
-                using var resp = await http.GetAsync(resolvedUrl, HttpCompletionOption.ResponseHeadersRead, token);
-                resp.EnsureSuccessStatusCode();
-                await using var src = await resp.Content.ReadAsStreamAsync(token);
-                await using (var fs = File.Create(stagedPath))
+                string finalPath;
+                if (existing is not null && new FileInfo(existing).Length > 0)
                 {
-                    await src.CopyToAsync(fs, token);
+                    log.LogInformation("reusing existing staged file {Path} ({Bytes:N0} bytes)", existing, new FileInfo(existing).Length);
+                    finalPath = existing;
                 }
-                log.LogInformation("downloaded {Bytes:N0} bytes to {Path}",
-                    new FileInfo(stagedPath).Length, stagedPath);
-                return OpenForIngest(stagedPath);
+                else
+                {
+                    var resolvedUrl = await GoogleDriveDirectAsync(req.Url, httpFactory.CreateClient("import"), log, token);
+                    var http = httpFactory.CreateClient("import");
+                    using var resp = await http.GetAsync(resolvedUrl, HttpCompletionOption.ResponseHeadersRead, token);
+                    resp.EnsureSuccessStatusCode();
+                    await using var src = await resp.Content.ReadAsStreamAsync(token);
+                    await using (var fs = File.Create(stagedPath))
+                    {
+                        await src.CopyToAsync(fs, token);
+                    }
+                    log.LogInformation("downloaded {Bytes:N0} bytes to {Path}",
+                        new FileInfo(stagedPath).Length, stagedPath);
+                    finalPath = stagedPath;
+                }
+                return OpenForIngest(finalPath);
             }, $"url:{req.Url}", out var reason))
             {
                 return Results.Conflict(new { error = reason });
             }
 
             return Results.Accepted("/api/catalog/import/status");
+        });
+
+        // Cleanup staged files older than 6h on the next request — keeps the
+        // volume from leaking 1.6 GB per import attempt.
+        grp.MapPost("/cleanup", (IConfiguration config) =>
+        {
+            var dbDir = Path.GetDirectoryName(Path.GetFullPath(config.GetValue<string>("Persistence:DbPath") ?? "data/linkharvester.db"))!;
+            var removed = 0;
+            foreach (var f in Directory.GetFiles(dbDir, "catalog-import-*.bin"))
+            {
+                try
+                {
+                    if (DateTime.UtcNow - File.GetLastWriteTimeUtc(f) > TimeSpan.FromHours(6))
+                    {
+                        File.Delete(f);
+                        removed++;
+                    }
+                }
+                catch { }
+            }
+            foreach (var f in Directory.GetFiles(dbDir, "catalog-upload-*.bin"))
+            {
+                try
+                {
+                    if (DateTime.UtcNow - File.GetLastWriteTimeUtc(f) > TimeSpan.FromHours(6))
+                    {
+                        File.Delete(f);
+                        removed++;
+                    }
+                }
+                catch { }
+            }
+            return Results.Ok(new { removed });
         });
 
         grp.MapGet("/status", (CatalogIngestionRunner runner) => Results.Ok(runner.Snapshot()));
