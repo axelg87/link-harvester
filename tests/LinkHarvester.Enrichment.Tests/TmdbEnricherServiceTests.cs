@@ -46,7 +46,8 @@ public class TmdbEnricherServiceTests : IAsyncLifetime
         var handler = new FakeTmdbHandler(_ => TimeSpan.FromMilliseconds(40));
         var http = new HttpClient(handler);
         var tmdb = new TmdbClient(http, NullLogger<TmdbClient>.Instance);
-        var sut = new TmdbEnricherService(_factory, settings, tmdb, tracker, NullLogger<TmdbEnricherService>.Instance);
+        var ingest = new FakeIngestionStatus { IsRunning = false };
+        var sut = new TmdbEnricherService(_factory, settings, tmdb, tracker, ingest, NullLogger<TmdbEnricherService>.Instance);
 
         using var hostCts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         await sut.StartAsync(hostCts.Token);
@@ -97,7 +98,8 @@ public class TmdbEnricherServiceTests : IAsyncLifetime
         var handler = new FakeTmdbHandler(_ => TimeSpan.FromMilliseconds(500));
         var http = new HttpClient(handler);
         var tmdb = new TmdbClient(http, NullLogger<TmdbClient>.Instance);
-        var sut = new TmdbEnricherService(_factory, settings, tmdb, tracker, NullLogger<TmdbEnricherService>.Instance);
+        var ingest = new FakeIngestionStatus { IsRunning = false };
+        var sut = new TmdbEnricherService(_factory, settings, tmdb, tracker, ingest, NullLogger<TmdbEnricherService>.Instance);
 
         using var hostCts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         await sut.StartAsync(hostCts.Token);

@@ -3,6 +3,7 @@ using System.Threading.Channels;
 using LinkHarvester.Core;
 using LinkHarvester.Persistence;
 using LinkHarvester.Persistence.Catalog;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -32,10 +33,13 @@ namespace LinkHarvester.Enrichment;
 /// </summary>
 public sealed class TmdbEnricherService : BackgroundService
 {
+    private static readonly TimeSpan GateRecheckInterval = TimeSpan.FromSeconds(2);
+
     private readonly IDbContextFactory<HarvesterDbContext> _factory;
     private readonly ISettingsService _settings;
     private readonly TmdbClient _tmdb;
     private readonly TmdbStatusTracker _tracker;
+    private readonly ICatalogIngestionStatus _ingestionStatus;
     private readonly ILogger<TmdbEnricherService> _log;
 
     /// <summary>
@@ -49,12 +53,14 @@ public sealed class TmdbEnricherService : BackgroundService
                                 ISettingsService settings,
                                 TmdbClient tmdb,
                                 TmdbStatusTracker tracker,
+                                ICatalogIngestionStatus ingestionStatus,
                                 ILogger<TmdbEnricherService> log)
     {
         _factory = factory;
         _settings = settings;
         _tmdb = tmdb;
         _tracker = tracker;
+        _ingestionStatus = ingestionStatus;
         _log = log;
     }
 
@@ -105,6 +111,25 @@ public sealed class TmdbEnricherService : BackgroundService
                 _tracker.SetIdle();
                 await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken);
                 return;
+            }
+
+            // BUG-2 prevention: while a catalog ingestion is in flight, its
+            // 25k-record write transactions hold the SQLite writer for
+            // 10–30 s at a time and contend with our per-title UPDATEs.
+            // Rather than racing for the lock and producing false 'database
+            // is locked' failures, stand down until the ingestor releases.
+            // Poll cheaply (a memory read) every GateRecheckInterval so the
+            // enricher resumes promptly when the import finishes.
+            if (_ingestionStatus.IsRunning)
+            {
+                _tracker.SetIdle();
+                _log.LogInformation("enricher pausing batch: catalog ingestion in progress");
+                while (!stoppingToken.IsCancellationRequested && _ingestionStatus.IsRunning)
+                {
+                    await Task.Delay(GateRecheckInterval, stoppingToken);
+                }
+                if (stoppingToken.IsCancellationRequested) return;
+                _log.LogInformation("enricher resuming: ingestion no longer running");
             }
 
             List<EnrichWorkItem> batch;
@@ -258,6 +283,16 @@ public sealed class TmdbEnricherService : BackgroundService
                     try { await Task.Delay(rl.RetryAfter, ct); }
                     catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
                 }
+                catch (Exception ex) when (IsTransientSqliteContention(ex))
+                {
+                    // BUG-2: SQLite "database is locked" / busy-timeout while
+                    // the catalog ingestor holds the writer. Treat as transient:
+                    // do NOT increment Attempts and do NOT set LastError. Leave
+                    // the title untouched so the next batch picks it up after
+                    // the ingestor releases. Without this guard, 5 such races
+                    // marked the title permanently 'failed'.
+                    _log.LogWarning(ex, "transient SQLite contention on titleId {Id}; will retry next batch", item.TitleId);
+                }
                 catch (Exception ex)
                 {
                     _log.LogWarning(ex, "enrich titleId {Id} failed", item.TitleId);
@@ -270,6 +305,36 @@ public sealed class TmdbEnricherService : BackgroundService
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Returns true when an exception (or any of its inner exceptions) looks
+    /// like SQLite write contention — error code 5 (SQLITE_BUSY), 6
+    /// (SQLITE_LOCKED), or a message containing "database is locked"/"busy"
+    /// /"timeout". The message-pattern fallback catches cases where the
+    /// exception is wrapped (e.g. by EF Core) with the SqliteException buried
+    /// in the chain.
+    /// </summary>
+    internal static bool IsTransientSqliteContention(Exception ex)
+    {
+        for (var e = (Exception?)ex; e is not null; e = e.InnerException)
+        {
+            if (e is SqliteException sx)
+            {
+                // 5 = SQLITE_BUSY, 6 = SQLITE_LOCKED.
+                if (sx.SqliteErrorCode == 5 || sx.SqliteErrorCode == 6) return true;
+            }
+            var m = e.Message;
+            if (!string.IsNullOrEmpty(m) &&
+                (m.Contains("database is locked", StringComparison.OrdinalIgnoreCase)
+                 || m.Contains("database is busy", StringComparison.OrdinalIgnoreCase)
+                 || m.Contains("SQLite Error 5", StringComparison.OrdinalIgnoreCase)
+                 || m.Contains("SQLite Error 6", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private async Task ProcessOneAsync(EnrichWorkItem item, string apiKey, CancellationToken ct)

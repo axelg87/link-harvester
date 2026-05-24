@@ -1,5 +1,6 @@
 using LinkHarvester.Api.Auth;
 using LinkHarvester.Api.Endpoints;
+using LinkHarvester.Api.Maintenance;
 using LinkHarvester.Core;
 using LinkHarvester.Enrichment;
 using LinkHarvester.Persistence;
@@ -93,6 +94,21 @@ using (var scope = app.Services.CreateScope())
     CatalogFts.EnsureCreated(db);
     var settings = scope.ServiceProvider.GetRequiredService<ISettingsService>();
     await settings.LoadAsync(CancellationToken.None);
+
+    // BUG-2 healing: any CatalogTitleMetadata rows in the 'failed' bucket
+    // whose LastError reads as SQLite write contention or a 30-second
+    // command timeout are residue from past concurrent ingest+enrich runs.
+    // Reset them to 'pending' so the enricher picks them up on its next
+    // batch. Pattern set lives in EnrichmentMaintenance so the manual
+    // reset endpoint, the /api/catalog/stats counter, and this auto-heal
+    // share one source of truth.
+    var startupLog = scope.ServiceProvider.GetRequiredService<ILoggerFactory>()
+        .CreateLogger("Startup");
+    var resetCount = await EnrichmentMaintenance.ResetTransientFailedAsync(db, CancellationToken.None);
+    if (resetCount > 0)
+    {
+        startupLog.LogInformation("reset {Count} transient enrichment failures (SQLite contention residue)", resetCount);
+    }
 }
 
 app.UseSerilogRequestLogging();

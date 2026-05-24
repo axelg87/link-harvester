@@ -4,10 +4,26 @@ using Microsoft.Extensions.Logging;
 namespace LinkHarvester.Persistence.Catalog;
 
 /// <summary>
+/// Read-only view of whether a catalog ingestion is currently in flight.
+/// Exposed as its own interface so cooperating background services (notably
+/// <c>TmdbEnricherService</c>) can gate their own writes against the
+/// ingestor's long write transactions without taking a hard dependency on
+/// the full <see cref="CatalogIngestionRunner"/> API or its DI scope.
+/// </summary>
+public interface ICatalogIngestionStatus
+{
+    /// <summary>
+    /// True while a catalog ingestion is actively running. Goes false the
+    /// instant the ingestion completes (succeeded, failed, or cancelled).
+    /// </summary>
+    bool IsRunning { get; }
+}
+
+/// <summary>
 /// Holds an in-memory snapshot of a running ingestion so the UI can poll
 /// progress without hitting the DB. Only one ingestion runs at a time.
 /// </summary>
-public sealed class CatalogIngestionRunner
+public sealed class CatalogIngestionRunner : ICatalogIngestionStatus
 {
     private readonly IServiceProvider _services;
     private readonly ILogger<CatalogIngestionRunner> _log;
@@ -31,6 +47,14 @@ public sealed class CatalogIngestionRunner
     {
         lock (_gate)
             return new IngestionStatus(_state, _description, _progress, _error, _startedAt, _finishedAt);
+    }
+
+    public bool IsRunning
+    {
+        get
+        {
+            lock (_gate) return _state == "running";
+        }
     }
 
     public bool TryStart(Func<CancellationToken, Task<Stream>> openStream, string description, out string? reason)
