@@ -27,6 +27,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinkHarvester.Sources.Tests
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinkHarvester.Enrichment", "src\LinkHarvester.Enrichment\LinkHarvester.Enrichment.csproj", "{A80A3778-0FCF-4221-8398-1F5BDE3B3F1D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinkHarvester.Enrichment.Tests", "tests\LinkHarvester.Enrichment.Tests\LinkHarvester.Enrichment.Tests.csproj", "{DBB68D52-8C85-41F0-A420-D23622A222A3}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -76,6 +78,10 @@ Global
 		{A80A3778-0FCF-4221-8398-1F5BDE3B3F1D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A80A3778-0FCF-4221-8398-1F5BDE3B3F1D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A80A3778-0FCF-4221-8398-1F5BDE3B3F1D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DBB68D52-8C85-41F0-A420-D23622A222A3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DBB68D52-8C85-41F0-A420-D23622A222A3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DBB68D52-8C85-41F0-A420-D23622A222A3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DBB68D52-8C85-41F0-A420-D23622A222A3}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{5C0742BA-0F74-46F5-AC18-DD8390D51FDA} = {F27826EF-0231-4CB2-A39A-02739D7C259B}
@@ -88,5 +94,6 @@ Global
 		{578915BA-F7EE-4EA6-8AC6-10046F234C78} = {F27826EF-0231-4CB2-A39A-02739D7C259B}
 		{33B0FCC6-D8BB-42EC-A514-B8A20BA8E48C} = {A248B87E-08D8-4415-9A9B-3F8EB7B3A255}
 		{A80A3778-0FCF-4221-8398-1F5BDE3B3F1D} = {F27826EF-0231-4CB2-A39A-02739D7C259B}
+		{DBB68D52-8C85-41F0-A420-D23622A222A3} = {A248B87E-08D8-4415-9A9B-3F8EB7B3A255}
 	EndGlobalSection
 EndGlobal
