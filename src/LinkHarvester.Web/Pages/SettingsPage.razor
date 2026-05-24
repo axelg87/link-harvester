@@ -2,6 +2,7 @@
 @implements IDisposable
 @inject HarvesterApi Api
 @inject NavigationManager Nav
+@inject Microsoft.JSInterop.IJSRuntime JsRuntime
 
 <PageTitle>Settings</PageTitle>
 
@@ -124,6 +125,25 @@
                         <span><strong>@_catalogStats.EnrichmentFailed.ToString("N0")</strong> failed</span>
                         <span class="lh-muted">enricher: @_catalogStats.EnrichmentRunState</span>
                     </div>
+
+                    @if (_catalogStats.EnrichmentFailed > 0)
+                    {
+                        <div class="lh-row">
+                            <button type="button" class="lh-secondary" @onclick="RetryTransientFailures" disabled="@(_resetting || _catalogStats.EnrichmentFailedTransient == 0)">
+                                Retry transient failures only (@_catalogStats.EnrichmentFailedTransient.ToString("N0"))
+                            </button>
+                            <button type="button" class="lh-secondary" @onclick="RetryAllFailures" disabled="@_resetting">
+                                Retry all failed (@_catalogStats.EnrichmentFailed.ToString("N0"))
+                            </button>
+                        </div>
+                        <p class="lh-muted">
+                            Transient failures = SQLite contention or 30 s command timeout. Safe to retry without spending TMDB calls on titles that genuinely don't match.
+                        </p>
+                        @if (_resetMessage is not null)
+                        {
+                            <p class="@(_resetIsError ? "lh-error" : "lh-muted")">@_resetMessage</p>
+                        }
+                    }
                 }
             </section>
 
@@ -217,6 +237,9 @@
     private bool _uploading;
     private long _uploadedBytes;
     private System.Threading.Timer? _poller;
+    private bool _resetting;
+    private bool _resetIsError;
+    private string? _resetMessage;
 
     protected override async Task OnInitializedAsync()
     {
@@ -307,6 +330,37 @@
     {
         await Api.CancelIngestionAsync();
         await RefreshCatalogStatus();
+    }
+
+    private Task RetryTransientFailures() => RetryFailures(onlyLockErrors: true,
+        confirmMessage: $"Reset {_catalogStats?.EnrichmentFailedTransient ?? 0} transient failures (lock/timeout) to pending? They'll be retried on the next batch.");
+
+    private Task RetryAllFailures() => RetryFailures(onlyLockErrors: false,
+        confirmMessage: $"Reset ALL {_catalogStats?.EnrichmentFailed ?? 0} failed enrichments to pending? Some of these may genuinely have no TMDB match — retrying will burn TMDB calls on them.");
+
+    private async Task RetryFailures(bool onlyLockErrors, string confirmMessage)
+    {
+        var ok = await JsRuntime.InvokeAsync<bool>("confirm", confirmMessage);
+        if (!ok) return;
+
+        _resetting = true;
+        _resetMessage = null;
+        try
+        {
+            var result = await Api.ResetFailedEnrichmentsAsync(onlyLockErrors);
+            _resetMessage = $"Reset {result.Reset:N0} failed enrichments to pending.";
+            _resetIsError = false;
+            await RefreshCatalogStatus();
+        }
+        catch (Exception ex)
+        {
+            _resetMessage = "Failed to reset: " + ex.Message;
+            _resetIsError = true;
+        }
+        finally
+        {
+            _resetting = false;
+        }
     }
 
     private sealed class CountingReadStream : Stream

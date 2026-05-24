@@ -52,7 +52,16 @@ public sealed record UpdateSettings(
 public sealed record SynologyTestResult(bool Ok, string? Error);
 
 // ── Catalog ──────────────────────────────────────────────────────────────
-public sealed record CatalogStats(int Titles, int Links, int Episodes, int Enriched, int EnrichmentFailed, string EnrichmentRunState);
+public sealed record CatalogStats(
+    int Titles,
+    int Links,
+    int Episodes,
+    int Enriched,
+    int EnrichmentFailed,
+    int EnrichmentFailedTransient,
+    string EnrichmentRunState);
+
+public sealed record ResetFailedResult(int Reset);
 
 public sealed record FacetEntry(string Key, int Count);
 public sealed record CatalogFacets(List<FacetEntry> Categories, List<FacetEntry> Hosts, List<FacetEntry> Qualities, List<FacetEntry> Audio);
