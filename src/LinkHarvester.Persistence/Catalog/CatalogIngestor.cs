@@ -59,21 +59,12 @@ public sealed class CatalogIngestor
         var titleIdsByKey = new Dictionary<string, int>(StringComparer.Ordinal);
         var episodeIdsByTitleAndKey = new Dictionary<(int, int, int, bool), int>();
 
-        // Resume optimisation: skip records we already ingested in a previous run.
-        // We use ExternalLinkId (= the JSON's link_id) as the checkpoint. The Hydracker
-        // dump is monotonic in link_id, so any record with link_id <= max already in
-        // the DB is guaranteed to be a duplicate we can skip without touching SQLite.
-        // This makes restart-recovery O(file-bytes-to-skim) rather than O(skim * upsert),
-        // turning a 10-minute "catch up" into ~30 seconds.
-        long resumeFromLinkId = 0;
-        await using (var seedDb = await _factory.CreateDbContextAsync(ct))
-        {
-            resumeFromLinkId = await seedDb.CatalogLinks.AsNoTracking()
-                .Select(l => (long?)l.ExternalLinkId)
-                .MaxAsync(ct) ?? 0;
-        }
-        if (resumeFromLinkId > 0)
-            _log.LogInformation("resuming catalog ingest; skipping records with link_id <= {N:N0}", resumeFromLinkId);
+        // Resume strategy: rely on ON CONFLICT DO NOTHING for correctness. We do NOT
+        // assume the JSON file is monotonic in link_id (it isn't, in practice — same
+        // title's variants can appear in any order). A previously-aborted ingest is
+        // safe to re-run from the start; SQLite skips already-known link_ids in O(1)
+        // per row via the unique index. Slower than a fast-path skip but provably
+        // correct.
 
         SqliteConnection? conn = null;
         SqliteTransaction? tx = null;
@@ -105,11 +96,6 @@ public sealed class CatalogIngestor
             {
                 ct.ThrowIfCancellationRequested();
                 total++;
-
-                // Fast-path skip: this record is older than our checkpoint.
-                // Cheap: no SQL, no allocation, ~1 µs per record.
-                if (resumeFromLinkId > 0 && rec.LinkId <= resumeFromLinkId)
-                    continue;
 
                 if (string.IsNullOrWhiteSpace(rec.TitleName) || string.IsNullOrWhiteSpace(rec.LinkUrl))
                 {
