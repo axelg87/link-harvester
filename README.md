@@ -134,7 +134,7 @@ into 5-minute restart cycles.
 
 | Section | Field | Notes |
 |---|---|---|
-| Synology | Base URL, username, password, OTP | DSM 7 web endpoint |
+| Synology | Direct Base URL or QuickConnect ID, username, password, OTP | DSM 7 web endpoint; QuickConnect can resolve/refresh relay URLs |
 | Synology | Movies / series destination | DSM share path |
 | Scanning | Auto-scan interval | Default 30 min |
 | Scanning | Scan on startup | Default true |

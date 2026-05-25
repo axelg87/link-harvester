@@ -37,9 +37,12 @@
                 Form="_form"
                 Existing="_existing"
                 TestResult="_testResult"
+                ResolveResult="_quickConnectResult"
                 Busy="_busy"
                 Testing="_testing"
-                OnTestSynology="TestSynology" />
+                Resolving="_resolvingQuickConnect"
+                OnTestSynology="TestSynology"
+                OnResolveQuickConnect="ResolveQuickConnect" />
 
             <ScanSettingsSection Form="_form" />
 
@@ -84,9 +87,11 @@
     private bool _loading = true;
     private bool _busy;
     private bool _testing;
+    private bool _resolvingQuickConnect;
     private bool _isError;
     private string? _message;
     private SynologyTestResult? _testResult;
+    private QuickConnectResolveResult? _quickConnectResult;
     private Settings? _existing;
     private SettingsFormModel? _form;
 
@@ -252,5 +257,26 @@
         try { _testResult = await Api.TestSynologyAsync(); }
         catch (Exception ex) { _testResult = new SynologyTestResult(false, ex.Message); }
         finally { _testing = false; }
+    }
+
+    private async Task ResolveQuickConnect()
+    {
+        if (_form is null) return;
+        _resolvingQuickConnect = true;
+        _quickConnectResult = null;
+        try
+        {
+            _quickConnectResult = await Api.ResolveQuickConnectAsync(_form.SynologyQuickConnectId);
+            if (_quickConnectResult.Ok)
+            {
+                _existing = await Api.GetSettingsAsync();
+                _form = SettingsFormModel.From(_existing);
+            }
+        }
+        catch (Exception ex)
+        {
+            _quickConnectResult = new QuickConnectResolveResult(false, null, null, new(), ex.Message);
+        }
+        finally { _resolvingQuickConnect = false; }
     }
 }

@@ -10,6 +10,10 @@ public class AppSettingsEntity
 
     // Synology DownloadStation
     public string SynologyBaseUrl { get; set; } = string.Empty;
+    public int SynologyConnectionMode { get; set; }
+    public string SynologyQuickConnectId { get; set; } = string.Empty;
+    public string SynologyResolvedBaseUrl { get; set; } = string.Empty;
+    public DateTimeOffset? SynologyResolvedAt { get; set; }
     public string SynologyUsername { get; set; } = string.Empty;
     /// <summary>Stored as a DataProtection-encrypted ciphertext.</summary>
     public string SynologyPasswordEncrypted { get; set; } = string.Empty;

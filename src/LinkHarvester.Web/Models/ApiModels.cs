@@ -36,20 +36,30 @@ public sealed record SendResult(int SubmissionId, string Status, string? Respons
 public sealed record BudgetSnapshot(decimal SpentUsd, int Calls);
 
 public sealed record Settings(
-    string SynologyBaseUrl, string SynologyUsername, bool SynologyPasswordSet,
+    string SynologyBaseUrl, string SynologyConnectionMode, string SynologyQuickConnectId,
+    string SynologyResolvedBaseUrl, DateTimeOffset? SynologyResolvedAt,
+    string SynologyUsername, bool SynologyPasswordSet,
     string? SynologyOtpCode, string SynologyMovieDestination, string SynologySeriesDestination,
     int ScanIntervalMinutes, bool ScanOnStartup, List<string> HosterPriority,
     string AuthUsername, bool AuthPasswordSet,
     bool TmdbApiKeySet, bool TmdbEnrichmentEnabled, int TmdbEnrichmentConcurrency);
 
 public sealed record UpdateSettings(
-    string? SynologyBaseUrl, string? SynologyUsername, string? SynologyPassword,
+    string? SynologyBaseUrl, string? SynologyConnectionMode, string? SynologyQuickConnectId,
+    string? SynologyUsername, string? SynologyPassword,
     string? SynologyOtpCode, string? SynologyMovieDestination, string? SynologySeriesDestination,
     int? ScanIntervalMinutes, bool? ScanOnStartup, List<string>? HosterPriority,
     string? AuthUsername, string? AuthPassword,
     string? TmdbApiKey, bool TmdbEnrichmentEnabled, int TmdbEnrichmentConcurrency);
 
 public sealed record SynologyTestResult(bool Ok, string? Error);
+
+public sealed record QuickConnectResolveResult(
+    bool Ok,
+    string? BaseUrl,
+    DateTimeOffset? ResolvedAt,
+    List<string> ProbedUrls,
+    string? Error);
 
 // ── Catalog ──────────────────────────────────────────────────────────────
 public sealed record CatalogStats(

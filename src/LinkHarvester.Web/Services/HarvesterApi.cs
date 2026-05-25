@@ -77,6 +77,13 @@ public sealed class HarvesterApi
         return (await resp.Content.ReadFromJsonAsync<SynologyTestResult>(cancellationToken: ct))!;
     }
 
+    public async Task<QuickConnectResolveResult> ResolveQuickConnectAsync(string? quickConnectId, CancellationToken ct = default)
+    {
+        using var resp = await _http.PostAsJsonAsync("api/settings/resolve-quickconnect", new { quickConnectId }, ct);
+        resp.EnsureSuccessStatusCode();
+        return (await resp.Content.ReadFromJsonAsync<QuickConnectResolveResult>(cancellationToken: ct))!;
+    }
+
     // ── Catalog ───────────────────────────────────────────────────────────
     public async Task<CatalogStats> GetCatalogStatsAsync(CancellationToken ct = default)
         => (await _http.GetFromJsonAsync<CatalogStats>("api/catalog/stats", ct))!;

@@ -66,6 +66,10 @@ public sealed class SettingsService : ISettingsService
         var row = await db.AppSettings.FirstOrDefaultAsync(ct) ?? new AppSettingsEntity { Id = 1 };
 
         row.SynologyBaseUrl = updated.SynologyBaseUrl ?? string.Empty;
+        row.SynologyConnectionMode = (int)updated.SynologyConnectionMode;
+        row.SynologyQuickConnectId = updated.SynologyQuickConnectId ?? string.Empty;
+        row.SynologyResolvedBaseUrl = updated.SynologyResolvedBaseUrl ?? string.Empty;
+        row.SynologyResolvedAt = updated.SynologyResolvedAt;
         row.SynologyUsername = updated.SynologyUsername ?? string.Empty;
         if (!string.IsNullOrEmpty(updated.SynologyPassword))
             row.SynologyPasswordEncrypted = _protector.Protect(updated.SynologyPassword);
@@ -125,6 +129,12 @@ public sealed class SettingsService : ISettingsService
             Id = 1,
             AuthUsername = auth.GetValue<string>("Username") ?? "admin",
             SynologyBaseUrl = syn.GetValue<string>("BaseUrl") ?? "",
+            SynologyConnectionMode = (int)(syn.GetValue<string>("ConnectionMode") is { } mode
+                && Enum.TryParse<SynologyConnectionMode>(mode, ignoreCase: true, out var parsed)
+                    ? parsed
+                    : SynologyConnectionMode.Direct),
+            SynologyQuickConnectId = syn.GetValue<string>("QuickConnectId") ?? "",
+            SynologyResolvedBaseUrl = syn.GetValue<string>("ResolvedBaseUrl") ?? "",
             SynologyUsername = syn.GetValue<string>("Username") ?? "",
             SynologyOtpCode = syn.GetValue<string>("OtpCode"),
             SynologyMovieDestination = syn.GetValue<string>("DefaultMovieDestination") ?? "video/movies",
@@ -158,7 +168,13 @@ public sealed class SettingsService : ISettingsService
         AuthPassword: SafeUnprotect(row.AuthPasswordEncrypted),
         TmdbApiKey: SafeUnprotect(row.TmdbApiKeyEncrypted),
         TmdbEnrichmentEnabled: row.TmdbEnrichmentEnabled,
-        TmdbEnrichmentConcurrency: row.TmdbEnrichmentConcurrency <= 0 ? 4 : row.TmdbEnrichmentConcurrency);
+        TmdbEnrichmentConcurrency: row.TmdbEnrichmentConcurrency <= 0 ? 4 : row.TmdbEnrichmentConcurrency,
+        SynologyConnectionMode: Enum.IsDefined(typeof(SynologyConnectionMode), row.SynologyConnectionMode)
+            ? (SynologyConnectionMode)row.SynologyConnectionMode
+            : SynologyConnectionMode.Direct,
+        SynologyQuickConnectId: row.SynologyQuickConnectId,
+        SynologyResolvedBaseUrl: row.SynologyResolvedBaseUrl,
+        SynologyResolvedAt: row.SynologyResolvedAt);
 
     private string SafeUnprotect(string ciphertext)
     {

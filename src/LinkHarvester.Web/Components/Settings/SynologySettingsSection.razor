@@ -5,7 +5,45 @@
     <p class="lh-muted">Where the "Send to NAS" button submits to.</p>
 
     <label class="lh-field">
-        <span>Base URL</span>
+        <span>Connection mode</span>
+        <InputSelect @bind-Value="Form.SynologyConnectionMode">
+            <option value="Direct">Direct DSM URL</option>
+            <option value="QuickConnect">QuickConnect ID</option>
+        </InputSelect>
+    </label>
+
+    @if (IsQuickConnect)
+    {
+        <label class="lh-field">
+            <span>QuickConnect ID</span>
+            <InputText @bind-Value="Form.SynologyQuickConnectId" placeholder="nasaxelg3" autocomplete="off" />
+        </label>
+        <div class="lh-row">
+            <button type="button" class="lh-secondary" @onclick="OnResolveQuickConnect" disabled="@(Busy || Resolving)">
+                @(Resolving ? "Resolving…" : "Resolve / refresh DSM endpoint")
+            </button>
+            @if (ResolveResult is { } qr)
+            {
+                <span class="@(qr.Ok ? "lh-test-ok" : "lh-test-err")">
+                    @(qr.Ok ? "✓ Resolved" : "✕ " + qr.Error)
+                </span>
+            }
+        </div>
+        @if (!string.IsNullOrWhiteSpace(Existing?.SynologyResolvedBaseUrl))
+        {
+            <p class="lh-muted">
+                Current DSM endpoint:
+                <code>@Existing.SynologyResolvedBaseUrl</code>
+                @if (Existing.SynologyResolvedAt is { } resolvedAt)
+                {
+                    <span> · refreshed @resolvedAt.ToLocalTime().ToString("g")</span>
+                }
+            </p>
+        }
+    }
+
+    <label class="lh-field">
+        <span>@(IsQuickConnect ? "Fallback direct Base URL" : "Base URL")</span>
         <InputText @bind-Value="Form.SynologyBaseUrl" placeholder="http://your-nas.local:5000" />
     </label>
     <label class="lh-field">
@@ -30,7 +68,7 @@
     </label>
 
     <div class="lh-row">
-        <button type="button" class="lh-secondary" @onclick="OnTestSynology" disabled="@Busy">
+        <button type="button" class="lh-secondary" @onclick="OnTestSynology" disabled="@(Busy || Testing)">
             @(Testing ? "Testing…" : "Test connection")
         </button>
         @if (TestResult is { } tr)
@@ -46,7 +84,13 @@
     [Parameter, EditorRequired] public SettingsFormModel Form { get; set; } = default!;
     [Parameter] public Settings? Existing { get; set; }
     [Parameter] public SynologyTestResult? TestResult { get; set; }
+    [Parameter] public QuickConnectResolveResult? ResolveResult { get; set; }
     [Parameter] public bool Busy { get; set; }
     [Parameter] public bool Testing { get; set; }
+    [Parameter] public bool Resolving { get; set; }
     [Parameter] public EventCallback OnTestSynology { get; set; }
+    [Parameter] public EventCallback OnResolveQuickConnect { get; set; }
+
+    private bool IsQuickConnect =>
+        string.Equals(Form.SynologyConnectionMode, "QuickConnect", StringComparison.OrdinalIgnoreCase);
 }
