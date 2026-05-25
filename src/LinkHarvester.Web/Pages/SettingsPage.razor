@@ -249,7 +249,7 @@
     {
         _testing = true;
         _testResult = null;
-        try { _testResult = await Api.TestSynologyAsync(); }
+        try { _testResult = await Api.TestSynologyAsync(_form.ToUpdate()); }
         catch (Exception ex) { _testResult = new SynologyTestResult(false, ex.Message); }
         finally { _testing = false; }
     }

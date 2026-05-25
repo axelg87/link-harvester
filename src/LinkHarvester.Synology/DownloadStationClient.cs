@@ -146,21 +146,33 @@ public sealed class DownloadStationClient : IDownloadStationClient
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
             {
+                _log.LogWarning(ex, "Synology login transport error to {BaseUrl}", s.SynologyBaseUrl);
                 throw DsmException.ForTransport(s.SynologyBaseUrl, ex);
             }
 
             if (!resp.IsSuccessStatusCode)
+            {
+                _log.LogWarning("Synology login HTTP {Status} from {BaseUrl}", (int)resp.StatusCode, s.SynologyBaseUrl);
                 throw DsmException.ForHttp(resp.StatusCode, s.SynologyBaseUrl, body);
+            }
 
             DsmEnvelope<DsmAuthResponse>? env;
             try { env = JsonSerializer.Deserialize<DsmEnvelope<DsmAuthResponse>>(body); }
             catch (JsonException) { env = null; }
 
             if (env is null)
+            {
+                _log.LogWarning("Synology login returned unparseable JSON from {BaseUrl}", s.SynologyBaseUrl);
                 throw DsmException.ForUnparseable(s.SynologyBaseUrl, body);
+            }
 
             if (!env.Success || env.Data?.Sid is null)
-                throw DsmException.ForCode(env.Error?.Code ?? 0, s.SynologyUsername, s.SynologyBaseUrl);
+            {
+                var code = env.Error?.Code ?? 0;
+                _log.LogWarning("Synology login failed for {User} at {BaseUrl} (DSM code {Code})",
+                    s.SynologyUsername, s.SynologyBaseUrl, code);
+                throw DsmException.ForCode(code, s.SynologyUsername, s.SynologyBaseUrl);
+            }
 
             _sid = env.Data.Sid;
             _sidObtainedAt = DateTimeOffset.UtcNow;

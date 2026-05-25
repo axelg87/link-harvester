@@ -60,6 +60,19 @@ public sealed class SettingsService : ISettingsService
         Changed?.Invoke();
     }
 
+    public async Task<T> WithSnapshotAsync<T>(AppSettingsSnapshot snapshot, Func<CancellationToken, Task<T>> action, CancellationToken ct)
+    {
+        var previous = _current;
+        _current = snapshot;
+        Changed?.Invoke();
+        try { return await action(ct); }
+        finally
+        {
+            _current = previous;
+            Changed?.Invoke();
+        }
+    }
+
     public async Task UpdateAsync(AppSettingsSnapshot updated, CancellationToken ct)
     {
         await using var db = await _factory.CreateDbContextAsync(ct);

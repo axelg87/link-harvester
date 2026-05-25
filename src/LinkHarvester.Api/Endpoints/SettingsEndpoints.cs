@@ -55,25 +55,46 @@ public static class SettingsEndpoints
             return Results.Ok();
         });
 
-        grp.MapPost("/test-synology", async (IDownloadStationClient dsm, CancellationToken ct) =>
+        grp.MapPost("/test-synology", async (UpdateSettingsDto? req, ISettingsService settings, IDownloadStationClient dsm, CancellationToken ct) =>
         {
-            try
+            // Use the Synology fields from the request body when present so
+            // "Test connection" validates what's in the form, not only what's saved.
+            var testSnapshot = MergeSynologyForTest(settings.Current, req);
+            return await settings.WithSnapshotAsync(testSnapshot, async innerCt =>
             {
-                // Probing the auth flow via an empty URL list short-circuits before submission.
-                await dsm.CreateTasksAsync(Array.Empty<string>(), null, ct);
-                return Results.Ok(new { ok = true });
-            }
-            catch (DsmException dx)
-            {
-                return Results.Ok(new { ok = false, error = dx.HumanMessage });
-            }
-            catch (Exception ex)
-            {
-                return Results.Ok(new { ok = false, error = ex.Message });
-            }
+                try
+                {
+                    // Probing the auth flow via an empty URL list short-circuits before submission.
+                    await dsm.CreateTasksAsync(Array.Empty<string>(), null, innerCt);
+                    return Results.Ok(new { ok = true });
+                }
+                catch (DsmException dx)
+                {
+                    return Results.Ok(new { ok = false, error = dx.HumanMessage });
+                }
+                catch (Exception ex)
+                {
+                    return Results.Ok(new { ok = false, error = ex.Message });
+                }
+            }, ct);
         });
 
         return routes;
+    }
+
+    /// <summary>Merges optional Synology fields from a test/save request into the current snapshot.</summary>
+    public static AppSettingsSnapshot MergeSynologyForTest(AppSettingsSnapshot current, UpdateSettingsDto? req)
+    {
+        if (req is null) return current;
+        return current with
+        {
+            SynologyBaseUrl = req.SynologyBaseUrl ?? current.SynologyBaseUrl,
+            SynologyUsername = req.SynologyUsername ?? current.SynologyUsername,
+            SynologyPassword = string.IsNullOrEmpty(req.SynologyPassword) ? current.SynologyPassword : req.SynologyPassword,
+            SynologyOtpCode = req.SynologyOtpCode,
+            SynologyMovieDestination = req.SynologyMovieDestination ?? current.SynologyMovieDestination,
+            SynologySeriesDestination = req.SynologySeriesDestination ?? current.SynologySeriesDestination,
+        };
     }
 
     public sealed record SettingsDto(

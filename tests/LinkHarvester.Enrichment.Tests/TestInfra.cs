@@ -49,6 +49,20 @@ internal sealed class FakeSettingsService : ISettingsService
         RaiseChanged();
         return Task.CompletedTask;
     }
+
+    public async Task<T> WithSnapshotAsync<T>(AppSettingsSnapshot snapshot, Func<CancellationToken, Task<T>> action, CancellationToken ct)
+    {
+        var previous = Current;
+        Current = snapshot;
+        RaiseChanged();
+        try { return await action(ct); }
+        finally
+        {
+            Current = previous;
+            RaiseChanged();
+        }
+    }
+
     public bool VerifyCredentials(string username, string password) => true;
 
     public static AppSettingsSnapshot Default => new(

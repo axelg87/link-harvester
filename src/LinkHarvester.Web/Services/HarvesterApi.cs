@@ -70,9 +70,9 @@ public sealed class HarvesterApi
         resp.EnsureSuccessStatusCode();
     }
 
-    public async Task<SynologyTestResult> TestSynologyAsync(CancellationToken ct = default)
+    public async Task<SynologyTestResult> TestSynologyAsync(UpdateSettings synologyFromForm, CancellationToken ct = default)
     {
-        using var resp = await _http.PostAsync("api/settings/test-synology", null, ct);
+        using var resp = await _http.PostAsJsonAsync("api/settings/test-synology", synologyFromForm, ct);
         resp.EnsureSuccessStatusCode();
         return (await resp.Content.ReadFromJsonAsync<SynologyTestResult>(cancellationToken: ct))!;
     }
