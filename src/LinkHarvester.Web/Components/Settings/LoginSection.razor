@@ -1,0 +1,18 @@
+@* This app's own login credentials (separate from the Synology NAS auth above). *@
+
+<section class="lh-section">
+    <h2>Login (this app)</h2>
+    <p class="lh-muted">Used to access this website.</p>
+    <label class="lh-field">
+        <span>Username</span>
+        <InputText @bind-Value="Form.AuthUsername" />
+    </label>
+    <label class="lh-field">
+        <span>Password (leave blank to keep)</span>
+        <InputText @bind-Value="Form.AuthPassword" type="password" autocomplete="new-password" />
+    </label>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public SettingsFormModel Form { get; set; } = default!;
+}

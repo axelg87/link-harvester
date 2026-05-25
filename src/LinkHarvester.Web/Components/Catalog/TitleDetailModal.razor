@@ -1,0 +1,107 @@
+@* Modal that shows a single catalog title's links + episodes and lets the user
+   pick which links to send to DSM. Pure presentational — all state and the
+   actual send call live in the parent Catalog page. *@
+
+<div class="lh-modal" @onclick="OnClose">
+    <div class="lh-modal-card" @onclick:stopPropagation="true">
+        <button class="lh-modal-close" @onclick="OnClose">✕</button>
+        <header class="lh-modal-head">
+            @if (!string.IsNullOrEmpty(Title.Poster))
+            {
+                <img src="@Title.Poster" alt="" class="lh-modal-poster" />
+            }
+            <div>
+                <h2>@Title.Title</h2>
+                <div class="lh-modal-meta">
+                    @if (Title.Year.HasValue) { <span>@Title.Year</span> }
+                    @if (Title.Rating.HasValue) { <span>★ @Title.Rating.Value.ToString("0.0")</span> }
+                    @if (Title.Runtime.HasValue) { <span>@Title.Runtime min</span> }
+                    <span class="lh-tag">@Title.Category</span>
+                </div>
+                @if (Title.Genres.Count > 0)
+                {
+                    <div class="lh-muted">@string.Join(" · ", Title.Genres)</div>
+                }
+            </div>
+        </header>
+
+        @if (!string.IsNullOrEmpty(Title.Overview))
+        {
+            <p class="lh-overview">@Title.Overview</p>
+        }
+
+        @if (Title.Links.Count > 0)
+        {
+            <section class="lh-modal-section">
+                <h3>Links</h3>
+                <ul class="lh-link-list">
+                    @foreach (var l in Title.Links)
+                    {
+                        <li>
+                            <label class="lh-link-row">
+                                <input type="checkbox" checked="@SelectedLinkIds.Contains(l.Id)"
+                                       @onchange="@(e => InvokeToggle(l.Id, (bool)e.Value!))" />
+                                <span class="lh-link-host">@l.Host</span>
+                                @if (!string.IsNullOrEmpty(l.Quality)) { <span class="lh-tag lh-tag-quality">@l.Quality</span> }
+                                @if (l.SizeBytes.HasValue) { <span class="lh-muted">@FormatHelpers.FormatSize(l.SizeBytes.Value)</span> }
+                                @if (!string.IsNullOrEmpty(l.AudioLangs)) { <span class="lh-muted">@l.AudioLangs</span> }
+                            </label>
+                        </li>
+                    }
+                </ul>
+            </section>
+        }
+
+        @foreach (var ep in Title.Episodes)
+        {
+            <section class="lh-modal-section">
+                <h3>@FormatEpisodeHeader(ep)</h3>
+                <ul class="lh-link-list">
+                    @foreach (var l in ep.Links)
+                    {
+                        <li>
+                            <label class="lh-link-row">
+                                <input type="checkbox" checked="@SelectedLinkIds.Contains(l.Id)"
+                                       @onchange="@(e => InvokeToggle(l.Id, (bool)e.Value!))" />
+                                <span class="lh-link-host">@l.Host</span>
+                                @if (!string.IsNullOrEmpty(l.Quality)) { <span class="lh-tag lh-tag-quality">@l.Quality</span> }
+                                @if (l.SizeBytes.HasValue) { <span class="lh-muted">@FormatHelpers.FormatSize(l.SizeBytes.Value)</span> }
+                            </label>
+                        </li>
+                    }
+                </ul>
+            </section>
+        }
+
+        <footer class="lh-modal-actions">
+            <span class="lh-muted">@SelectedLinkIds.Count selected</span>
+            <button class="lh-primary" @onclick="OnSend" disabled="@(SelectedLinkIds.Count == 0 || Sending)">
+                @(Sending ? "Sending…" : "Send to NAS")
+            </button>
+        </footer>
+        @if (SendMessage is not null)
+        {
+            <p class="@(SendOk ? "lh-muted" : "lh-error")">@SendMessage</p>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public TitleDetail Title { get; set; } = default!;
+    [Parameter, EditorRequired] public HashSet<int> SelectedLinkIds { get; set; } = default!;
+    [Parameter] public bool Sending { get; set; }
+    [Parameter] public bool SendOk { get; set; }
+    [Parameter] public string? SendMessage { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<(int LinkId, bool On)> OnToggleLink { get; set; }
+    [Parameter] public EventCallback OnSend { get; set; }
+
+    private Task InvokeToggle(int linkId, bool on) => OnToggleLink.InvokeAsync((linkId, on));
+
+    private static string FormatEpisodeHeader(CatalogEpisode ep)
+    {
+        if (ep.IsFullSeason) return $"Season {ep.SeasonNumber} (full)";
+        var label = $"S{ep.SeasonNumber:D2}E{ep.EpisodeNumber:D2}";
+        return string.IsNullOrEmpty(ep.EpisodeName) ? label : $"{label} {ep.EpisodeName}";
+    }
+}

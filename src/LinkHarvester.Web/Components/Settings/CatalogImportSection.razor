@@ -1,0 +1,64 @@
+@* Catalog ingest UI: import from URL OR upload local file, plus live ingestion status. *@
+
+<section class="lh-section">
+    <h2>Catalog: import</h2>
+    <p class="lh-muted">Upload a Hydracker-style JSON dump (one array of records or one JSON per line, .json or .json.gz).</p>
+
+    <div class="lh-field">
+        <span>Import from public URL (Google Drive supported)</span>
+        <div class="lh-row">
+            <input type="text" value="@ImportUrl" @oninput="OnImportUrlInput"
+                   placeholder="https://drive.google.com/file/d/.../view" />
+            <button type="button" class="lh-primary" @onclick="OnStartImportFromUrl"
+                    disabled="@(Ingestion?.State == "running")">
+                Start import
+            </button>
+        </div>
+    </div>
+
+    <div class="lh-field">
+        <span>Or upload a local file</span>
+        <InputFile OnChange="OnFilePicked" disabled="@(Ingestion?.State == "running" || Uploading)" />
+    </div>
+
+    @if (Uploading)
+    {
+        <p class="lh-muted">Uploading… @($"{UploadedBytes / 1024d / 1024:0.0} MB")</p>
+    }
+    @if (Ingestion is not null)
+    {
+        <div class="lh-row lh-stats">
+            <span>state: <strong>@Ingestion.State</strong></span>
+            <span><strong>@Ingestion.Progress.Read.ToString("N0")</strong> records read</span>
+            <span><strong>@Ingestion.Progress.Titles.ToString("N0")</strong> titles</span>
+            <span><strong>@Ingestion.Progress.Episodes.ToString("N0")</strong> episodes</span>
+            <span><strong>@Ingestion.Progress.Links.ToString("N0")</strong> links</span>
+            @if (Ingestion.Progress.Failed > 0)
+            {
+                <span class="lh-error">@Ingestion.Progress.Failed.ToString("N0") failed</span>
+            }
+        </div>
+        @if (!string.IsNullOrEmpty(Ingestion.Error))
+        {
+            <p class="lh-error">@Ingestion.Error</p>
+        }
+        @if (Ingestion.State == "running")
+        {
+            <button class="lh-secondary" type="button" @onclick="OnCancelImport">Cancel import</button>
+        }
+    }
+</section>
+
+@code {
+    [Parameter] public string ImportUrl { get; set; } = "";
+    [Parameter] public EventCallback<string> ImportUrlChanged { get; set; }
+    [Parameter] public bool Uploading { get; set; }
+    [Parameter] public long UploadedBytes { get; set; }
+    [Parameter] public IngestionStatus? Ingestion { get; set; }
+    [Parameter] public EventCallback OnStartImportFromUrl { get; set; }
+    [Parameter] public EventCallback<InputFileChangeEventArgs> OnFilePicked { get; set; }
+    [Parameter] public EventCallback OnCancelImport { get; set; }
+
+    private Task OnImportUrlInput(ChangeEventArgs e) =>
+        ImportUrlChanged.InvokeAsync(e.Value?.ToString() ?? "");
+}

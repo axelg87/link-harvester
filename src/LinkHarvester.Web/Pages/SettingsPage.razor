@@ -6,6 +6,16 @@
 
 <PageTitle>Settings</PageTitle>
 
+@*
+    Page-level coordination only. Every settings group is its own component
+    in Web/Components/Settings/; this file owns:
+      - Loading + saving (single EditForm + Save submit).
+      - Catalog/ingestion status polling on a timer.
+      - Cross-section transient state (test result, reset confirmation
+        dialog, busy flags).
+    The previous all-in-one version was 477 lines; this one is ~120.
+*@
+
 <div class="lh-settings">
     <div class="lh-settings-head">
         <a href="/" class="lh-link">← Inbox</a>
@@ -23,189 +33,38 @@
     else
     {
         <EditForm Model="_form" OnValidSubmit="Save">
-            <section class="lh-section">
-                <h2>Synology DownloadStation</h2>
-                <p class="lh-muted">Where the "Send to NAS" button submits to.</p>
+            <SynologySettingsSection
+                Form="_form"
+                Existing="_existing"
+                TestResult="_testResult"
+                Busy="_busy"
+                Testing="_testing"
+                OnTestSynology="TestSynology" />
 
-                <label class="lh-field">
-                    <span>Base URL</span>
-                    <InputText @bind-Value="_form.SynologyBaseUrl" placeholder="http://your-nas.local:5000" />
-                </label>
-                <label class="lh-field">
-                    <span>Username</span>
-                    <InputText @bind-Value="_form.SynologyUsername" autocomplete="off" />
-                </label>
-                <label class="lh-field">
-                    <span>Password @(_existing?.SynologyPasswordSet == true ? "(leave blank to keep)" : "")</span>
-                    <InputText @bind-Value="_form.SynologyPassword" type="password" autocomplete="new-password" />
-                </label>
-                <label class="lh-field">
-                    <span>OTP code (if 2FA enabled, leave empty otherwise)</span>
-                    <InputText @bind-Value="_form.SynologyOtpCode" autocomplete="off" />
-                </label>
-                <label class="lh-field">
-                    <span>Movies destination folder</span>
-                    <InputText @bind-Value="_form.SynologyMovieDestination" placeholder="video/movies" />
-                </label>
-                <label class="lh-field">
-                    <span>Series destination folder</span>
-                    <InputText @bind-Value="_form.SynologySeriesDestination" placeholder="video/series" />
-                </label>
+            <ScanSettingsSection Form="_form" />
 
-                <div class="lh-row">
-                    <button type="button" class="lh-secondary" @onclick="TestSynology" disabled="@_busy">
-                        @(_testing ? "Testing…" : "Test connection")
-                    </button>
-                    @if (_testResult is { } tr)
-                    {
-                        <span class="@(tr.Ok ? "lh-test-ok" : "lh-test-err")">
-                            @(tr.Ok ? "✓ Connected" : "✕ " + tr.Error)
-                        </span>
-                    }
-                </div>
-            </section>
+            <HosterPrioritySection Form="_form" />
 
-            <section class="lh-section">
-                <h2>Scanning</h2>
-                <label class="lh-field">
-                    <span>Auto-scan interval (minutes)</span>
-                    <InputNumber @bind-Value="_form.ScanIntervalMinutes" min="1" />
-                </label>
-                <label class="lh-field lh-field-row">
-                    <InputCheckbox @bind-Value="_form.ScanOnStartup" />
-                    <span>Scan once on app startup</span>
-                </label>
-            </section>
+            <TmdbEnrichmentSection
+                Form="_form"
+                Stats="_catalogStats"
+                Resetting="_resetting"
+                ResetIsError="_resetIsError"
+                ResetMessage="_resetMessage"
+                OnRetryTransient="RetryTransientFailures"
+                OnRetryAll="RetryAllFailures" />
 
-            <section class="lh-section">
-                <h2>Hoster priority</h2>
-                <p class="lh-muted">Top hoster wins. Articles whose hosters aren't in this list are skipped at submit time.</p>
-                @for (var i = 0; i < _form.HosterPriority.Count; i++)
-                {
-                    var idx = i;
-                    <div class="lh-host-row">
-                        <span class="lh-host-rank">@(idx + 1)</span>
-                        <InputText @bind-Value="_form.HosterPriority[idx]" />
-                        <button type="button" class="lh-link" @onclick="() => MoveHost(idx, -1)" disabled="@(idx == 0)">↑</button>
-                        <button type="button" class="lh-link" @onclick="() => MoveHost(idx, 1)" disabled="@(idx == _form.HosterPriority.Count - 1)">↓</button>
-                        <button type="button" class="lh-link" @onclick="() => RemoveHost(idx)">remove</button>
-                    </div>
-                }
-                <button type="button" class="lh-secondary" @onclick="AddHost">+ Add hoster</button>
-            </section>
+            <CatalogImportSection
+                ImportUrl="_importUrl"
+                ImportUrlChanged="@(v => _importUrl = v)"
+                Uploading="_uploading"
+                UploadedBytes="_uploadedBytes"
+                Ingestion="_ingestion"
+                OnStartImportFromUrl="StartImportFromUrl"
+                OnFilePicked="OnFilePicked"
+                OnCancelImport="CancelImport" />
 
-            <section class="lh-section">
-                <h2>Catalog: TMDB enrichment</h2>
-                <p class="lh-muted">
-                    Year, genre, rating, runtime and language filters need TMDB metadata.
-                    Sign up free at
-                    <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org/settings/api</a>
-                    and paste the API key (v3) below. The background enricher will work
-                    through your catalog automatically; you can keep using the app.
-                </p>
-                <label class="lh-field">
-                    <span>TMDB API key (leave blank to keep)</span>
-                    <InputText @bind-Value="_form.TmdbApiKey" type="password" autocomplete="off" />
-                </label>
-                <label class="lh-field lh-field-row">
-                    <InputCheckbox @bind-Value="_form.TmdbEnrichmentEnabled" />
-                    <span>Enable background enrichment</span>
-                </label>
-                <label class="lh-field">
-                    <span>Parallel workers (1-8)</span>
-                    <InputNumber @bind-Value="_form.TmdbEnrichmentConcurrency" min="1" max="8" />
-                </label>
-
-                @if (_catalogStats is not null)
-                {
-                    <div class="lh-row lh-stats">
-                        <span><strong>@_catalogStats.Titles.ToString("N0")</strong> titles</span>
-                        <span><strong>@_catalogStats.Links.ToString("N0")</strong> links</span>
-                        <span><strong>@_catalogStats.Enriched.ToString("N0")</strong> enriched</span>
-                        <span><strong>@_catalogStats.EnrichmentFailed.ToString("N0")</strong> failed</span>
-                        <span class="lh-muted">enricher: @_catalogStats.EnrichmentRunState</span>
-                    </div>
-
-                    @if (_catalogStats.EnrichmentFailed > 0)
-                    {
-                        <div class="lh-row">
-                            <button type="button" class="lh-secondary" @onclick="RetryTransientFailures" disabled="@(_resetting || _catalogStats.EnrichmentFailedTransient == 0)">
-                                Retry transient failures only (@_catalogStats.EnrichmentFailedTransient.ToString("N0"))
-                            </button>
-                            <button type="button" class="lh-secondary" @onclick="RetryAllFailures" disabled="@_resetting">
-                                Retry all failed (@_catalogStats.EnrichmentFailed.ToString("N0"))
-                            </button>
-                        </div>
-                        <p class="lh-muted">
-                            Transient failures = SQLite contention or 30 s command timeout. Safe to retry without spending TMDB calls on titles that genuinely don't match.
-                        </p>
-                        @if (_resetMessage is not null)
-                        {
-                            <p class="@(_resetIsError ? "lh-error" : "lh-muted")">@_resetMessage</p>
-                        }
-                    }
-                }
-            </section>
-
-            <section class="lh-section">
-                <h2>Catalog: import</h2>
-                <p class="lh-muted">Upload a Hydracker-style JSON dump (one array of records or one JSON per line, .json or .json.gz).</p>
-
-                <div class="lh-field">
-                    <span>Import from public URL (Google Drive supported)</span>
-                    <div class="lh-row">
-                        <input type="text" @bind="_importUrl" placeholder="https://drive.google.com/file/d/.../view" />
-                        <button type="button" class="lh-primary" @onclick="StartImportFromUrl" disabled="@(_ingestion?.State == "running")">
-                            Start import
-                        </button>
-                    </div>
-                </div>
-
-                <div class="lh-field">
-                    <span>Or upload a local file</span>
-                    <InputFile OnChange="OnFilePicked" disabled="@(_ingestion?.State == "running" || _uploading)" />
-                </div>
-
-                @if (_uploading)
-                {
-                    <p class="lh-muted">Uploading… @($"{_uploadedBytes / 1024d / 1024:0.0} MB")</p>
-                }
-                @if (_ingestion is not null)
-                {
-                    <div class="lh-row lh-stats">
-                        <span>state: <strong>@_ingestion.State</strong></span>
-                        <span><strong>@_ingestion.Progress.Read.ToString("N0")</strong> records read</span>
-                        <span><strong>@_ingestion.Progress.Titles.ToString("N0")</strong> titles</span>
-                        <span><strong>@_ingestion.Progress.Episodes.ToString("N0")</strong> episodes</span>
-                        <span><strong>@_ingestion.Progress.Links.ToString("N0")</strong> links</span>
-                        @if (_ingestion.Progress.Failed > 0)
-                        {
-                            <span class="lh-error">@_ingestion.Progress.Failed.ToString("N0") failed</span>
-                        }
-                    </div>
-                    @if (!string.IsNullOrEmpty(_ingestion.Error))
-                    {
-                        <p class="lh-error">@_ingestion.Error</p>
-                    }
-                    @if (_ingestion.State == "running")
-                    {
-                        <button class="lh-secondary" type="button" @onclick="CancelImport">Cancel import</button>
-                    }
-                }
-            </section>
-
-            <section class="lh-section">
-                <h2>Login (this app)</h2>
-                <p class="lh-muted">Used to access this website.</p>
-                <label class="lh-field">
-                    <span>Username</span>
-                    <InputText @bind-Value="_form.AuthUsername" />
-                </label>
-                <label class="lh-field">
-                    <span>Password (leave blank to keep)</span>
-                    <InputText @bind-Value="_form.AuthPassword" type="password" autocomplete="new-password" />
-                </label>
-            </section>
+            <LoginSection Form="_form" />
 
             @if (_message is not null)
             {
@@ -229,7 +88,7 @@
     private string? _message;
     private SynologyTestResult? _testResult;
     private Settings? _existing;
-    private FormModel? _form;
+    private SettingsFormModel? _form;
 
     private CatalogStats? _catalogStats;
     private IngestionStatus? _ingestion;
@@ -246,7 +105,7 @@
         try
         {
             _existing = await Api.GetSettingsAsync();
-            _form = FormModel.From(_existing);
+            _form = SettingsFormModel.From(_existing);
         }
         catch (Exception ex)
         {
@@ -258,7 +117,7 @@
         _poller = new System.Threading.Timer(async _ =>
         {
             try { await InvokeAsync(RefreshCatalogStatus); }
-            catch { }
+            catch { /* ignore transient polling errors */ }
         }, null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
     }
 
@@ -332,10 +191,12 @@
         await RefreshCatalogStatus();
     }
 
-    private Task RetryTransientFailures() => RetryFailures(onlyLockErrors: true,
+    private Task RetryTransientFailures() => RetryFailures(
+        onlyLockErrors: true,
         confirmMessage: $"Reset {_catalogStats?.EnrichmentFailedTransient ?? 0} transient failures (lock/timeout) to pending? They'll be retried on the next batch.");
 
-    private Task RetryAllFailures() => RetryFailures(onlyLockErrors: false,
+    private Task RetryAllFailures() => RetryFailures(
+        onlyLockErrors: false,
         confirmMessage: $"Reset ALL {_catalogStats?.EnrichmentFailed ?? 0} failed enrichments to pending? Some of these may genuinely have no TMDB match — retrying will burn TMDB calls on them.");
 
     private async Task RetryFailures(bool onlyLockErrors, string confirmMessage)
@@ -363,26 +224,6 @@
         }
     }
 
-    private sealed class CountingReadStream : Stream
-    {
-        private readonly Stream _inner;
-        private readonly Action<long> _onRead;
-        public CountingReadStream(Stream inner, Action<long> onRead) { _inner = inner; _onRead = onRead; }
-        public override bool CanRead => _inner.CanRead;
-        public override bool CanSeek => false;
-        public override bool CanWrite => false;
-        public override long Length => _inner.Length;
-        public override long Position { get => _inner.Position; set => throw new NotSupportedException(); }
-        public override void Flush() { }
-        public override int Read(byte[] buffer, int offset, int count)
-        { var n = _inner.Read(buffer, offset, count); if (n > 0) _onRead(n); return n; }
-        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
-        { var n = await _inner.ReadAsync(buffer, ct); if (n > 0) _onRead(n); return n; }
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-    }
-
     private async Task Save()
     {
         if (_form is null) return;
@@ -392,7 +233,7 @@
         {
             await Api.SaveSettingsAsync(_form.ToUpdate());
             _existing = await Api.GetSettingsAsync();
-            _form = FormModel.From(_existing);
+            _form = SettingsFormModel.From(_existing);
             _message = "Saved.";
             _isError = false;
         }
@@ -411,67 +252,5 @@
         try { _testResult = await Api.TestSynologyAsync(); }
         catch (Exception ex) { _testResult = new SynologyTestResult(false, ex.Message); }
         finally { _testing = false; }
-    }
-
-    private void AddHost() => _form!.HosterPriority.Add("");
-    private void RemoveHost(int i) => _form!.HosterPriority.RemoveAt(i);
-    private void MoveHost(int i, int delta)
-    {
-        var list = _form!.HosterPriority;
-        var j = i + delta;
-        if (j < 0 || j >= list.Count) return;
-        (list[i], list[j]) = (list[j], list[i]);
-    }
-
-    private sealed class FormModel
-    {
-        public string SynologyBaseUrl { get; set; } = "";
-        public string SynologyUsername { get; set; } = "";
-        public string SynologyPassword { get; set; } = "";
-        public string? SynologyOtpCode { get; set; }
-        public string SynologyMovieDestination { get; set; } = "";
-        public string SynologySeriesDestination { get; set; } = "";
-        public int ScanIntervalMinutes { get; set; }
-        public bool ScanOnStartup { get; set; }
-        public List<string> HosterPriority { get; set; } = new();
-        public string AuthUsername { get; set; } = "";
-        public string AuthPassword { get; set; } = "";
-        public string TmdbApiKey { get; set; } = "";
-        public bool TmdbEnrichmentEnabled { get; set; } = true;
-        public int TmdbEnrichmentConcurrency { get; set; } = 4;
-
-        public static FormModel From(Settings s) => new()
-        {
-            SynologyBaseUrl = s.SynologyBaseUrl,
-            SynologyUsername = s.SynologyUsername,
-            SynologyPassword = "",
-            SynologyOtpCode = s.SynologyOtpCode,
-            SynologyMovieDestination = s.SynologyMovieDestination,
-            SynologySeriesDestination = s.SynologySeriesDestination,
-            ScanIntervalMinutes = s.ScanIntervalMinutes,
-            ScanOnStartup = s.ScanOnStartup,
-            HosterPriority = s.HosterPriority.ToList(),
-            AuthUsername = s.AuthUsername,
-            AuthPassword = "",
-            TmdbApiKey = "",
-            TmdbEnrichmentEnabled = s.TmdbEnrichmentEnabled,
-            TmdbEnrichmentConcurrency = s.TmdbEnrichmentConcurrency
-        };
-
-        public UpdateSettings ToUpdate() => new(
-            SynologyBaseUrl: SynologyBaseUrl,
-            SynologyUsername: SynologyUsername,
-            SynologyPassword: SynologyPassword,
-            SynologyOtpCode: SynologyOtpCode,
-            SynologyMovieDestination: SynologyMovieDestination,
-            SynologySeriesDestination: SynologySeriesDestination,
-            ScanIntervalMinutes: ScanIntervalMinutes,
-            ScanOnStartup: ScanOnStartup,
-            HosterPriority: HosterPriority.Where(h => !string.IsNullOrWhiteSpace(h)).ToList(),
-            AuthUsername: AuthUsername,
-            AuthPassword: AuthPassword,
-            TmdbApiKey: TmdbApiKey,
-            TmdbEnrichmentEnabled: TmdbEnrichmentEnabled,
-            TmdbEnrichmentConcurrency: TmdbEnrichmentConcurrency);
     }
 }

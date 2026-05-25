@@ -1,0 +1,33 @@
+@* Ordered hoster preference list. Re-orderable in place; encapsulates its own
+   move/remove/add handlers since the state being edited is entirely Form.HosterPriority. *@
+
+<section class="lh-section">
+    <h2>Hoster priority</h2>
+    <p class="lh-muted">Top hoster wins. Articles whose hosters aren't in this list are skipped at submit time.</p>
+    @for (var i = 0; i < Form.HosterPriority.Count; i++)
+    {
+        var idx = i;
+        <div class="lh-host-row">
+            <span class="lh-host-rank">@(idx + 1)</span>
+            <InputText @bind-Value="Form.HosterPriority[idx]" />
+            <button type="button" class="lh-link" @onclick="() => Move(idx, -1)" disabled="@(idx == 0)">↑</button>
+            <button type="button" class="lh-link" @onclick="() => Move(idx, 1)" disabled="@(idx == Form.HosterPriority.Count - 1)">↓</button>
+            <button type="button" class="lh-link" @onclick="() => Remove(idx)">remove</button>
+        </div>
+    }
+    <button type="button" class="lh-secondary" @onclick="Add">+ Add hoster</button>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public SettingsFormModel Form { get; set; } = default!;
+
+    private void Add() => Form.HosterPriority.Add("");
+    private void Remove(int i) => Form.HosterPriority.RemoveAt(i);
+    private void Move(int i, int delta)
+    {
+        var list = Form.HosterPriority;
+        var j = i + delta;
+        if (j < 0 || j >= list.Count) return;
+        (list[i], list[j]) = (list[j], list[i]);
+    }
+}

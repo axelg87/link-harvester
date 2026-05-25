@@ -35,6 +35,10 @@ public class HarvesterDbContext : DbContext
         {
             e.HasIndex(t => t.Canonical).IsUnique();
             e.HasIndex(t => new { t.NormalizedTitle, t.Year, t.Kind, t.SeasonNumber });
+            // Inbox query filters by Status and orders by UpdatedAt; without
+            // this composite index it's a full table scan that grows linearly
+            // with scan history.
+            e.HasIndex(t => new { t.Status, t.UpdatedAt });
             e.Property(t => t.Canonical).HasMaxLength(512);
             e.Property(t => t.NormalizedTitle).HasMaxLength(512);
             e.Property(t => t.DisplayTitle).HasMaxLength(512);
@@ -141,6 +145,12 @@ public class HarvesterDbContext : DbContext
             e.HasIndex(m => m.TitleId).IsUnique();
             e.HasIndex(m => m.EnrichmentSource);
             e.HasIndex(m => m.Year);
+            // Default catalog browse sort is Meta.Popularity DESC. Without
+            // this index SQLite must scan all 100k+ metadata rows then sort
+            // — the dominant cost at /api/catalog/search?sort=popularity.
+            e.HasIndex(m => m.Popularity);
+            // Rating-sorted browse path.
+            e.HasIndex(m => m.VoteAverage);
             e.Property(m => m.ReleaseDate).HasMaxLength(20);
             e.Property(m => m.OriginalLanguage).HasMaxLength(16);
             e.Property(m => m.Status).HasMaxLength(32);

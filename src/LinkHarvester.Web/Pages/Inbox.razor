@@ -124,7 +124,20 @@
         try
         {
             var res = await Api.SendArticleAsync(articleId);
-            _messages[articleId] = $"Sent ({res.Status}, {res.TaskIds.Count} task{(res.TaskIds.Count == 1 ? "" : "s")} created).";
+            // The submission is persisted regardless of DSM outcome. On
+            // failure, ResponseMessage holds the friendly DsmException.HumanMessage
+            // (see SubmissionService); surface it directly instead of the
+            // raw exception message we'd previously fall through to.
+            if (string.Equals(res.Status, "Failed", StringComparison.OrdinalIgnoreCase))
+            {
+                _messages[articleId] = string.IsNullOrEmpty(res.Response)
+                    ? "Send failed (no detail)."
+                    : res.Response;
+            }
+            else
+            {
+                _messages[articleId] = $"Sent ({res.Status}, {res.TaskIds.Count} task{(res.TaskIds.Count == 1 ? "" : "s")} created).";
+            }
             await Refresh();
         }
         catch (Exception ex)
@@ -157,12 +170,5 @@
         _ => c.Kind
     };
 
-    private static string FormatSize(long bytes)
-    {
-        const double GB = 1024d * 1024 * 1024;
-        const double MB = 1024d * 1024;
-        if (bytes >= GB) return $"{bytes / GB:0.0} GB";
-        if (bytes >= MB) return $"{bytes / MB:0.0} MB";
-        return $"{bytes / 1024d:0.0} KB";
-    }
+    private static string FormatSize(long bytes) => FormatHelpers.FormatSize(bytes);
 }
