@@ -19,7 +19,7 @@
             <InputText @bind-Value="Form.SynologyQuickConnectId" placeholder="nasaxelg3" autocomplete="off" />
         </label>
         <div class="lh-row">
-            <button type="button" class="lh-secondary" @onclick="OnResolveQuickConnect" disabled="@Busy">
+            <button type="button" class="lh-secondary" @onclick="OnResolveQuickConnect" disabled="@(Busy || Resolving)">
                 @(Resolving ? "Resolving…" : "Resolve / refresh DSM endpoint")
             </button>
             @if (ResolveResult is { } qr)
@@ -68,7 +68,7 @@
     </label>
 
     <div class="lh-row">
-        <button type="button" class="lh-secondary" @onclick="OnTestSynology" disabled="@Busy">
+        <button type="button" class="lh-secondary" @onclick="OnTestSynology" disabled="@(Busy || Testing)">
             @(Testing ? "Testing…" : "Test connection")
         </button>
         @if (TestResult is { } tr)
