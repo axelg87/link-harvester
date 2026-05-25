@@ -1,6 +1,7 @@
 using System.Text.Json;
 using LinkHarvester.Core;
 using LinkHarvester.Persistence;
+using LinkHarvester.Synology;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -140,11 +141,20 @@ public sealed class SubmissionService
             }
             article.Title.UpdatedAt = DateTimeOffset.UtcNow;
         }
+        catch (DsmException dx)
+        {
+            // Persist the user-facing message rather than the raw inner
+            // exception so the inbox UI shows something actionable.
+            submission.Status = SubmissionStatus.Failed;
+            submission.ResponseMessage = dx.HumanMessage;
+            _log.LogWarning(dx, "DSM rejected submission for article {Id} (code {Code})", articleId, dx.Code);
+        }
         catch (Exception ex)
         {
+            // Unexpected — keep the raw message but still mark failed.
             submission.Status = SubmissionStatus.Failed;
             submission.ResponseMessage = ex.Message;
-            _log.LogError(ex, "Failed to push to DSM for article {Id}", articleId);
+            _log.LogError(ex, "Unexpected error pushing to DSM for article {Id}", articleId);
         }
 
         await db.SaveChangesAsync(ct);

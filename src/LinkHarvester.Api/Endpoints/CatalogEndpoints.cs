@@ -5,6 +5,7 @@ using LinkHarvester.Core;
 using LinkHarvester.Enrichment;
 using LinkHarvester.Persistence;
 using LinkHarvester.Persistence.Catalog;
+using LinkHarvester.Synology;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -269,9 +270,21 @@ public static class CatalogEndpoints
                 var taskIds = await dsm.CreateTasksAsync(urls, dest, ct);
                 return Results.Ok(new SendResultDto(true, null, taskIds.ToList(), urls.Count));
             }
-            catch (Exception ex)
+            catch (DsmException dx)
             {
-                return Results.Ok(new SendResultDto(false, ex.Message, new(), urls.Count));
+                // Map to a proper HTTP status so the client can branch on it,
+                // but keep ok=false in the body so the existing WASM toast
+                // path keeps working without changes.
+                var status = dx.Code switch
+                {
+                    DsmException.SyntheticNotConfigured => StatusCodes.Status400BadRequest,
+                    DsmException.SyntheticUnreachable => StatusCodes.Status502BadGateway,
+                    DsmException.SyntheticTimeout => StatusCodes.Status504GatewayTimeout,
+                    _ => StatusCodes.Status502BadGateway,
+                };
+                return Results.Json(
+                    new SendResultDto(false, dx.HumanMessage, new(), urls.Count),
+                    statusCode: status);
             }
         });
 

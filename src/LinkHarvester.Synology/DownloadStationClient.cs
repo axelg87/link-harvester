@@ -11,6 +11,12 @@ namespace LinkHarvester.Synology;
 ///
 /// Auth: SYNO.API.Auth v6 (login, returns sid).
 /// Submit: SYNO.DownloadStation2.Task v2 (POST with `url` array as JSON-encoded list).
+///
+/// Errors:
+///   All failure paths throw <see cref="DsmException"/>; the API/Worker layer
+///   surfaces <see cref="DsmException.HumanMessage"/> directly to the UI. We
+///   deliberately do not leak raw DSM error codes or response bodies to
+///   callers — only the structured exception carries them.
 /// </summary>
 public sealed class DownloadStationClient : IDownloadStationClient
 {
@@ -35,9 +41,9 @@ public sealed class DownloadStationClient : IDownloadStationClient
     {
         var s = _settings.Current;
         if (string.IsNullOrWhiteSpace(s.SynologyBaseUrl))
-            throw new InvalidOperationException("Synology BaseUrl is not configured.");
+            throw DsmException.NotConfigured("Base URL");
         if (string.IsNullOrWhiteSpace(s.SynologyUsername) || string.IsNullOrWhiteSpace(s.SynologyPassword))
-            throw new InvalidOperationException("Synology credentials are not configured.");
+            throw DsmException.NotConfigured("credentials");
         var urlList = urls.Where(u => !string.IsNullOrWhiteSpace(u)).Distinct().ToList();
 
         await EnsureSessionAsync(ct);
@@ -61,20 +67,41 @@ public sealed class DownloadStationClient : IDownloadStationClient
             form["destination"] = $"\"{destination}\"";
         }
 
-        using var content = new FormUrlEncodedContent(form);
-        using var resp = await _http.PostAsync(endpoint, content, ct);
-        var body = await resp.Content.ReadAsStringAsync(ct);
-        var parsed = JsonSerializer.Deserialize<DsmEnvelope<DsmTaskListResponse>>(body)
-            ?? throw new InvalidOperationException($"Unparseable Synology response: {body}");
+        HttpResponseMessage resp;
+        string body;
+        try
+        {
+            using var content = new FormUrlEncodedContent(form);
+            resp = await _http.PostAsync(endpoint, content, ct);
+            body = await resp.Content.ReadAsStringAsync(ct);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+        {
+            throw DsmException.ForTransport(s.SynologyBaseUrl, ex);
+        }
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            throw DsmException.ForHttp(resp.StatusCode, s.SynologyBaseUrl, body);
+        }
+
+        DsmEnvelope<DsmTaskListResponse>? parsed;
+        try { parsed = JsonSerializer.Deserialize<DsmEnvelope<DsmTaskListResponse>>(body); }
+        catch (JsonException) { parsed = null; }
+
+        if (parsed is null)
+            throw DsmException.ForUnparseable(s.SynologyBaseUrl, body);
+
         if (!parsed.Success)
         {
-            // 105 = Insufficient permissions; 119 = SID not found (session expired).
-            if (parsed.Error?.Code is 105 or 119)
-            {
-                _sid = null;
-                throw new InvalidOperationException($"Synology auth error code {parsed.Error?.Code}; session reset");
-            }
-            throw new InvalidOperationException($"Synology API error: code={parsed.Error?.Code}");
+            var code = parsed.Error?.Code ?? 0;
+            // Reset SID on session-related codes so the next call re-auths.
+            if (code is 105 or 119) _sid = null;
+
+            // DSM2 400 includes a per-URL `errors[].url` breakdown when the
+            // hoster isn't accepted; surface the first failing URL.
+            var firstBadUrl = parsed.Error?.Errors?.FirstOrDefault()?.Url;
+            throw DsmException.ForCode(code, s.SynologyUsername, s.SynologyBaseUrl, failedUrl: firstBadUrl);
         }
 
         var ids = parsed.Data?.Task?.Select(t => t.TaskId ?? string.Empty).Where(s => s.Length > 0).ToList()
@@ -109,13 +136,31 @@ public sealed class DownloadStationClient : IDownloadStationClient
             if (!string.IsNullOrWhiteSpace(s.SynologyOtpCode))
                 form["otp_code"] = s.SynologyOtpCode!;
 
-            using var content = new FormUrlEncodedContent(form);
-            using var resp = await _http.PostAsync(endpoint, content, ct);
-            var body = await resp.Content.ReadAsStringAsync(ct);
-            var env = JsonSerializer.Deserialize<DsmEnvelope<DsmAuthResponse>>(body)
-                      ?? throw new InvalidOperationException("Unparseable Synology auth response");
+            HttpResponseMessage resp;
+            string body;
+            try
+            {
+                using var content = new FormUrlEncodedContent(form);
+                resp = await _http.PostAsync(endpoint, content, ct);
+                body = await resp.Content.ReadAsStringAsync(ct);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+            {
+                throw DsmException.ForTransport(s.SynologyBaseUrl, ex);
+            }
+
+            if (!resp.IsSuccessStatusCode)
+                throw DsmException.ForHttp(resp.StatusCode, s.SynologyBaseUrl, body);
+
+            DsmEnvelope<DsmAuthResponse>? env;
+            try { env = JsonSerializer.Deserialize<DsmEnvelope<DsmAuthResponse>>(body); }
+            catch (JsonException) { env = null; }
+
+            if (env is null)
+                throw DsmException.ForUnparseable(s.SynologyBaseUrl, body);
+
             if (!env.Success || env.Data?.Sid is null)
-                throw new InvalidOperationException($"Synology login failed (code={env.Error?.Code})");
+                throw DsmException.ForCode(env.Error?.Code ?? 0, s.SynologyUsername, s.SynologyBaseUrl);
 
             _sid = env.Data.Sid;
             _sidObtainedAt = DateTimeOffset.UtcNow;
@@ -131,7 +176,12 @@ public sealed class DownloadStationClient : IDownloadStationClient
         [property: JsonPropertyName("error")] DsmError? Error);
 
     private sealed record DsmError(
-        [property: JsonPropertyName("code")] int Code);
+        [property: JsonPropertyName("code")] int Code,
+        [property: JsonPropertyName("errors")] List<DsmErrorDetail>? Errors);
+
+    private sealed record DsmErrorDetail(
+        [property: JsonPropertyName("url")] string? Url,
+        [property: JsonPropertyName("error")] int? Error);
 
     private sealed record DsmAuthResponse(
         [property: JsonPropertyName("sid")] string? Sid);

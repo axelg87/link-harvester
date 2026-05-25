@@ -1,4 +1,5 @@
 using LinkHarvester.Core;
+using LinkHarvester.Synology;
 
 namespace LinkHarvester.Api.Endpoints;
 
@@ -61,6 +62,10 @@ public static class SettingsEndpoints
                 // Probing the auth flow via an empty URL list short-circuits before submission.
                 await dsm.CreateTasksAsync(Array.Empty<string>(), null, ct);
                 return Results.Ok(new { ok = true });
+            }
+            catch (DsmException dx)
+            {
+                return Results.Ok(new { ok = false, error = dx.HumanMessage });
             }
             catch (Exception ex)
             {
