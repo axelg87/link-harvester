@@ -1,4 +1,5 @@
 using LinkHarvester.Api.Auth;
+using LinkHarvester.Api.Caching;
 using LinkHarvester.Api.Endpoints;
 using LinkHarvester.Api.Health;
 using LinkHarvester.Api.Maintenance;
@@ -72,6 +73,12 @@ builder.Services.AddHarvesterWorker(builder.Configuration);
 builder.Services.AddCatalogIngestion();
 builder.Services.AddCatalogEnrichment();
 builder.Services.AddSingleton<HealthCheckService>();
+
+// Catalog aggregates cache. /facets and /genres each cost O(rows) — links
+// table is 2.3M+, genres scan reads every metadata GenresJson — but the
+// answer barely changes between catalog page loads, so cache it.
+builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<CatalogAggregatesCache>();
 
 // Multi-GB uploads for the catalog dump.
 builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(o =>

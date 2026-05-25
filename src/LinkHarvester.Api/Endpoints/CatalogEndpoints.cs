@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using LinkHarvester.Api.Caching;
 using LinkHarvester.Api.Maintenance;
 using LinkHarvester.Core;
 using LinkHarvester.Enrichment;
@@ -184,62 +185,72 @@ public static class CatalogEndpoints
         });
 
         // ── Facets (filter chip counts) ──────────────────────────────────────
-        grp.MapGet("/facets", async (HarvesterDbContext db, CancellationToken ct) =>
+        // Both /facets and /genres are full-table scans; the result barely
+        // changes between catalog page loads. Cache for 5 minutes via
+        // CatalogAggregatesCache (single-flight per key) so the catalog
+        // page doesn't kick off four heavy queries on every render.
+        grp.MapGet("/facets", async (HarvesterDbContext db, CatalogAggregatesCache cache, CancellationToken ct) =>
         {
-            // EF Core's SQLite translator dislikes positional record constructors
-            // inside Select; project to anonymous first, then map.
-            var categories = await db.CatalogTitles.AsNoTracking()
-                .GroupBy(t => t.CategoryName)
-                .Select(g => new { Key = g.Key, Count = g.Count() })
-                .ToListAsync(ct);
-            var hosts = await db.CatalogLinks.AsNoTracking()
-                .GroupBy(l => l.HostName)
-                .Select(g => new { Key = g.Key, Count = g.Count() })
-                .OrderByDescending(x => x.Count)
-                .Take(40)
-                .ToListAsync(ct);
-            var qualities = await db.CatalogLinks.AsNoTracking()
-                .Where(l => l.QualityName != null)
-                .GroupBy(l => l.QualityName!)
-                .Select(g => new { Key = g.Key, Count = g.Count() })
-                .OrderByDescending(x => x.Count)
-                .Take(40)
-                .ToListAsync(ct);
-            var audio = await db.CatalogLinks.AsNoTracking()
-                .Where(l => l.AudioLangs != null)
-                .GroupBy(l => l.AudioLangs!)
-                .Select(g => new { Key = g.Key, Count = g.Count() })
-                .OrderByDescending(x => x.Count)
-                .Take(40)
-                .ToListAsync(ct);
-            return Results.Ok(new
+            var result = await cache.GetOrAddAsync("facets:v1", async token =>
             {
-                categories = categories.Select(x => new FacetEntry(x.Key, x.Count)),
-                hosts = hosts.Select(x => new FacetEntry(x.Key, x.Count)),
-                qualities = qualities.Select(x => new FacetEntry(x.Key, x.Count)),
-                audio = audio.Select(x => new FacetEntry(x.Key, x.Count))
-            });
+                // EF Core's SQLite translator dislikes positional record constructors
+                // inside Select; project to anonymous first, then map.
+                var categories = await db.CatalogTitles.AsNoTracking()
+                    .GroupBy(t => t.CategoryName)
+                    .Select(g => new { Key = g.Key, Count = g.Count() })
+                    .ToListAsync(token);
+                var hosts = await db.CatalogLinks.AsNoTracking()
+                    .GroupBy(l => l.HostName)
+                    .Select(g => new { Key = g.Key, Count = g.Count() })
+                    .OrderByDescending(x => x.Count)
+                    .Take(40)
+                    .ToListAsync(token);
+                var qualities = await db.CatalogLinks.AsNoTracking()
+                    .Where(l => l.QualityName != null)
+                    .GroupBy(l => l.QualityName!)
+                    .Select(g => new { Key = g.Key, Count = g.Count() })
+                    .OrderByDescending(x => x.Count)
+                    .Take(40)
+                    .ToListAsync(token);
+                var audio = await db.CatalogLinks.AsNoTracking()
+                    .Where(l => l.AudioLangs != null)
+                    .GroupBy(l => l.AudioLangs!)
+                    .Select(g => new { Key = g.Key, Count = g.Count() })
+                    .OrderByDescending(x => x.Count)
+                    .Take(40)
+                    .ToListAsync(token);
+                return new FacetsResponse(
+                    categories.Select(x => new FacetEntry(x.Key, x.Count)).ToList(),
+                    hosts.Select(x => new FacetEntry(x.Key, x.Count)).ToList(),
+                    qualities.Select(x => new FacetEntry(x.Key, x.Count)).ToList(),
+                    audio.Select(x => new FacetEntry(x.Key, x.Count)).ToList());
+            }, ct: ct);
+            return Results.Ok(result);
         });
 
-        grp.MapGet("/genres", async (HarvesterDbContext db, CancellationToken ct) =>
+        grp.MapGet("/genres", async (HarvesterDbContext db, CatalogAggregatesCache cache, CancellationToken ct) =>
         {
-            var rows = await db.CatalogTitleMetadata.AsNoTracking()
-                .Where(m => m.GenresJson != "[]")
-                .Select(m => m.GenresJson)
-                .ToListAsync(ct);
-            var counts = new Dictionary<string, int>(StringComparer.Ordinal);
-            foreach (var json in rows)
+            var result = await cache.GetOrAddAsync("genres:v1", async token =>
             {
-                try
+                var rows = await db.CatalogTitleMetadata.AsNoTracking()
+                    .Where(m => m.GenresJson != "[]")
+                    .Select(m => m.GenresJson)
+                    .ToListAsync(token);
+                var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+                foreach (var json in rows)
                 {
-                    var arr = JsonSerializer.Deserialize<string[]>(json);
-                    if (arr is null) continue;
-                    foreach (var g in arr) counts[g] = counts.TryGetValue(g, out var n) ? n + 1 : 1;
+                    try
+                    {
+                        var arr = JsonSerializer.Deserialize<string[]>(json);
+                        if (arr is null) continue;
+                        foreach (var g in arr) counts[g] = counts.TryGetValue(g, out var n) ? n + 1 : 1;
+                    }
+                    catch { /* malformed JSON row — skip */ }
                 }
-                catch { }
-            }
-            return Results.Ok(counts.Select(kv => new FacetEntry(kv.Key, kv.Value))
-                .OrderByDescending(x => x.Count).Take(40));
+                return counts.Select(kv => new FacetEntry(kv.Key, kv.Value))
+                    .OrderByDescending(x => x.Count).Take(40).ToList();
+            }, ct: ct);
+            return Results.Ok(result);
         });
 
         // ── Send specific link(s) to DSM right from the catalog ─────────────
@@ -389,6 +400,12 @@ public static class CatalogEndpoints
         string? AudioLangs, string? SubLangs, long? SizeBytes);
 
     public sealed record FacetEntry(string Key, int Count);
+
+    public sealed record FacetsResponse(
+        List<FacetEntry> Categories,
+        List<FacetEntry> Hosts,
+        List<FacetEntry> Qualities,
+        List<FacetEntry> Audio);
 
     public sealed record SendLinksReq(List<int> LinkIds);
     public sealed record SendResultDto(bool Ok, string? Error, List<string> TaskIds, int Submitted);
