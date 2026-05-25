@@ -9,6 +9,7 @@ public static class PersistenceServiceCollectionExtensions
     {
         services.AddSingleton<CatalogIngestor>();
         services.AddSingleton<CatalogIngestionRunner>();
+        services.AddSingleton<ICatalogIngestionStatus>(sp => sp.GetRequiredService<CatalogIngestionRunner>());
         return services;
     }
 }

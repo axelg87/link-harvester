@@ -115,6 +115,16 @@ internal sealed class FakeTmdbHandler : HttpMessageHandler
     }
 }
 
+/// <summary>
+/// Test double for <see cref="ICatalogIngestionStatus"/>. Tests flip
+/// <see cref="IsRunning"/> to simulate the catalog ingestor holding the
+/// SQLite writer.
+/// </summary>
+internal sealed class FakeIngestionStatus : ICatalogIngestionStatus
+{
+    public bool IsRunning { get; set; }
+}
+
 internal static class CatalogSeeder
 {
     /// <summary>
