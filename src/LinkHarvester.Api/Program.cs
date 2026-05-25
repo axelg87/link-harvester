@@ -1,5 +1,6 @@
 using LinkHarvester.Api.Auth;
 using LinkHarvester.Api.Endpoints;
+using LinkHarvester.Api.Health;
 using LinkHarvester.Api.Maintenance;
 using LinkHarvester.Core;
 using LinkHarvester.Enrichment;
@@ -13,6 +14,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
+using Serilog.Events;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -69,6 +71,7 @@ builder.Services.AddHarvesterSynology();
 builder.Services.AddHarvesterWorker(builder.Configuration);
 builder.Services.AddCatalogIngestion();
 builder.Services.AddCatalogEnrichment();
+builder.Services.AddSingleton<HealthCheckService>();
 
 // Multi-GB uploads for the catalog dump.
 builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(o =>
@@ -111,13 +114,24 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-app.UseSerilogRequestLogging();
+app.UseSerilogRequestLogging(opts =>
+{
+    // Don't drown the application log with Fly's 30-second health probes.
+    opts.GetLevel = (httpCtx, _, ex) =>
+    {
+        if (ex is not null) return LogEventLevel.Error;
+        if (httpCtx.Request.Path.StartsWithSegments("/healthz"))
+            return LogEventLevel.Verbose;
+        return LogEventLevel.Information;
+    };
+});
 app.UseStaticFiles();
 app.UseBlazorFrameworkFiles();
 
 app.UseAuthentication();
 app.UseAuthorization();
 
+app.MapHealthEndpoints();
 app.MapAuthEndpoints();
 app.MapHarvesterEndpoints();
 app.MapSettingsEndpoints();

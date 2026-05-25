@@ -32,10 +32,23 @@ primary_region = "bom"  # Mumbai — closest Fly region to the user's UAE NAS.
     soft_limit = 200
     hard_limit = 500
 
-# Disable Fly's HTTP health checks; the catalog ingestion can monopolise the
-# main thread for tens of seconds during commits, which makes the proxy
-# health probe time out and triggers a needless restart cycle.
-# We can re-enable a custom /healthz once the ingestion is offloaded.
+# Custom application-level health check. /healthz validates that the SQLite
+# connection is live (SELECT 1) and that the in-memory settings snapshot is
+# populated (DataProtection key ring loaded). The endpoint enforces a hard
+# 2-second budget internally.
+#
+# WAL mode lets the SELECT 1 complete during a catalog ingestion's writer
+# transaction, so the probe is safe even mid-import. A 60-second grace
+# period absorbs cold-start migration time, and 3 consecutive failures
+# (≈90 s of badness) trigger a Fly machine restart.
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "60s"
+  method = "GET"
+  path = "/healthz"
+  protocol = "http"
+
 [[vm]]
   size = "shared-cpu-1x"
   memory = "2gb"
