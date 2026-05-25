@@ -1,0 +1,52 @@
+@* Synology DownloadStation section: BaseUrl, credentials, destination folders, and a Test-connection button. *@
+
+<section class="lh-section">
+    <h2>Synology DownloadStation</h2>
+    <p class="lh-muted">Where the "Send to NAS" button submits to.</p>
+
+    <label class="lh-field">
+        <span>Base URL</span>
+        <InputText @bind-Value="Form.SynologyBaseUrl" placeholder="http://your-nas.local:5000" />
+    </label>
+    <label class="lh-field">
+        <span>Username</span>
+        <InputText @bind-Value="Form.SynologyUsername" autocomplete="off" />
+    </label>
+    <label class="lh-field">
+        <span>Password @(Existing?.SynologyPasswordSet == true ? "(leave blank to keep)" : "")</span>
+        <InputText @bind-Value="Form.SynologyPassword" type="password" autocomplete="new-password" />
+    </label>
+    <label class="lh-field">
+        <span>OTP code (if 2FA enabled, leave empty otherwise)</span>
+        <InputText @bind-Value="Form.SynologyOtpCode" autocomplete="off" />
+    </label>
+    <label class="lh-field">
+        <span>Movies destination folder</span>
+        <InputText @bind-Value="Form.SynologyMovieDestination" placeholder="video/movies" />
+    </label>
+    <label class="lh-field">
+        <span>Series destination folder</span>
+        <InputText @bind-Value="Form.SynologySeriesDestination" placeholder="video/series" />
+    </label>
+
+    <div class="lh-row">
+        <button type="button" class="lh-secondary" @onclick="OnTestSynology" disabled="@Busy">
+            @(Testing ? "Testing…" : "Test connection")
+        </button>
+        @if (TestResult is { } tr)
+        {
+            <span class="@(tr.Ok ? "lh-test-ok" : "lh-test-err")">
+                @(tr.Ok ? "✓ Connected" : "✕ " + tr.Error)
+            </span>
+        }
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public SettingsFormModel Form { get; set; } = default!;
+    [Parameter] public Settings? Existing { get; set; }
+    [Parameter] public SynologyTestResult? TestResult { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public bool Testing { get; set; }
+    [Parameter] public EventCallback OnTestSynology { get; set; }
+}

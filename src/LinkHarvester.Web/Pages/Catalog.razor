@@ -4,6 +4,16 @@
 
 <PageTitle>Catalog</PageTitle>
 
+@*
+    Page-level coordination only:
+      - First-load: fetch /stats, /facets, /genres, then run a default search.
+      - Search debounce + pagination.
+      - Modal lifecycle (open/close + best-link preselect).
+      - Send-to-NAS hand-off.
+    The filter sidebar and the title-detail modal each have their own
+    components under Web/Components/Catalog/.
+*@
+
 <div class="lh-catalog">
     <header class="lh-catalog-head">
         <a class="lh-link" href="/">← Inbox</a>
@@ -15,112 +25,17 @@
     </header>
 
     <div class="lh-catalog-body">
-        <aside class="lh-filters">
-            <div class="lh-search">
-                <input type="text" placeholder="Search titles…" @bind="_query.Q" @bind:event="oninput" @onkeyup="OnSearchKeyUp" />
-            </div>
-
-            @if (_facets is not null)
-            {
-                <details class="lh-filter-group" open>
-                    <summary>Category</summary>
-                    <button class="@CategoryClass(null)" @onclick="() => SetCategory(null)">All</button>
-                    @foreach (var c in _facets.Categories)
-                    {
-                        <button class="@CategoryClass(c.Key)" @onclick="() => SetCategory(c.Key)">@c.Key <span class="lh-count">@c.Count</span></button>
-                    }
-                </details>
-
-                <details class="lh-filter-group" open>
-                    <summary>Year</summary>
-                    <div class="lh-range">
-                        <input type="number" placeholder="from" @bind="_query.YearMin" @bind:after="ScheduleSearch" />
-                        <input type="number" placeholder="to" @bind="_query.YearMax" @bind:after="ScheduleSearch" />
-                    </div>
-                </details>
-
-                <details class="lh-filter-group" open>
-                    <summary>Rating</summary>
-                    <div class="lh-range">
-                        <input type="number" step="0.1" min="0" max="10" placeholder="min" @bind="_query.RatingMin" @bind:after="ScheduleSearch" />
-                    </div>
-                </details>
-
-                <details class="lh-filter-group">
-                    <summary>Genres</summary>
-                    @foreach (var g in _genres)
-                    {
-                        <label class="lh-check">
-                            <input type="checkbox" checked="@_query.Genres.Contains(g.Key)" @onchange="@(e => ToggleSet(_query.Genres, g.Key, (bool)e.Value!))" />
-                            <span>@g.Key</span>
-                            <span class="lh-count">@g.Count</span>
-                        </label>
-                    }
-                </details>
-
-                <details class="lh-filter-group">
-                    <summary>Quality</summary>
-                    @foreach (var q in _facets.Qualities)
-                    {
-                        <label class="lh-check">
-                            <input type="checkbox" checked="@_query.Qualities.Contains(q.Key)" @onchange="@(e => ToggleSet(_query.Qualities, q.Key, (bool)e.Value!))" />
-                            <span>@q.Key</span>
-                            <span class="lh-count">@q.Count</span>
-                        </label>
-                    }
-                </details>
-
-                <details class="lh-filter-group">
-                    <summary>Hoster</summary>
-                    @foreach (var h in _facets.Hosts)
-                    {
-                        <label class="lh-check">
-                            <input type="checkbox" checked="@_query.Hosts.Contains(h.Key.ToLowerInvariant())" @onchange="@(e => ToggleSet(_query.Hosts, h.Key.ToLowerInvariant(), (bool)e.Value!))" />
-                            <span>@h.Key</span>
-                            <span class="lh-count">@h.Count</span>
-                        </label>
-                    }
-                </details>
-
-                <details class="lh-filter-group">
-                    <summary>Audio</summary>
-                    @foreach (var a in _facets.Audio.Take(15))
-                    {
-                        <label class="lh-check">
-                            <input type="checkbox" checked="@_query.AudioLangs.Contains(a.Key)" @onchange="@(e => ToggleSet(_query.AudioLangs, a.Key, (bool)e.Value!))" />
-                            <span>@a.Key</span>
-                            <span class="lh-count">@a.Count</span>
-                        </label>
-                    }
-                </details>
-
-                <details class="lh-filter-group">
-                    <summary>Runtime (minutes)</summary>
-                    <div class="lh-range">
-                        <input type="number" placeholder="from" @bind="_query.RuntimeMin" @bind:after="ScheduleSearch" />
-                        <input type="number" placeholder="to" @bind="_query.RuntimeMax" @bind:after="ScheduleSearch" />
-                    </div>
-                </details>
-
-                <details class="lh-filter-group">
-                    <summary>Size (GB)</summary>
-                    <div class="lh-range">
-                        <input type="number" step="0.1" placeholder="min" @bind="_sizeMinGb" @bind:after="OnSizeChange" />
-                        <input type="number" step="0.1" placeholder="max" @bind="_sizeMaxGb" @bind:after="OnSizeChange" />
-                    </div>
-                </details>
-
-                <details class="lh-filter-group">
-                    <summary>Other</summary>
-                    <label class="lh-check">
-                        <input type="checkbox" @bind="_query.HasMetadataOnly" @bind:after="ScheduleSearch" />
-                        <span>TMDB-enriched only</span>
-                    </label>
-                </details>
-
-                <button class="lh-secondary lh-clear" @onclick="ClearAllFilters">Clear filters</button>
-            }
-        </aside>
+        <CatalogFilters
+            Query="_query"
+            Facets="_facets"
+            Genres="_genres"
+            SizeMinGb="_sizeMinGb"
+            SizeMaxGb="_sizeMaxGb"
+            SizeMinGbChanged="@(v => _sizeMinGb = v)"
+            SizeMaxGbChanged="@(v => _sizeMaxGb = v)"
+            OnSearchChanged="ScheduleSearch"
+            OnCategoryChanged="SetCategory"
+            OnClearFilters="ClearAllFilters" />
 
         <section class="lh-results">
             <div class="lh-results-bar">
@@ -194,87 +109,15 @@
 
 @if (_selectedTitle is not null)
 {
-    <div class="lh-modal" @onclick="CloseTitle">
-        <div class="lh-modal-card" @onclick:stopPropagation="true">
-            <button class="lh-modal-close" @onclick="CloseTitle">✕</button>
-            <header class="lh-modal-head">
-                @if (!string.IsNullOrEmpty(_selectedTitle.Poster))
-                {
-                    <img src="@_selectedTitle.Poster" alt="" class="lh-modal-poster" />
-                }
-                <div>
-                    <h2>@_selectedTitle.Title</h2>
-                    <div class="lh-modal-meta">
-                        @if (_selectedTitle.Year.HasValue) { <span>@_selectedTitle.Year</span> }
-                        @if (_selectedTitle.Rating.HasValue) { <span>★ @_selectedTitle.Rating.Value.ToString("0.0")</span> }
-                        @if (_selectedTitle.Runtime.HasValue) { <span>@_selectedTitle.Runtime min</span> }
-                        <span class="lh-tag">@_selectedTitle.Category</span>
-                    </div>
-                    @if (_selectedTitle.Genres.Count > 0)
-                    {
-                        <div class="lh-muted">@string.Join(" · ", _selectedTitle.Genres)</div>
-                    }
-                </div>
-            </header>
-
-            @if (!string.IsNullOrEmpty(_selectedTitle.Overview))
-            {
-                <p class="lh-overview">@_selectedTitle.Overview</p>
-            }
-
-            @if (_selectedTitle.Links.Count > 0)
-            {
-                <section class="lh-modal-section">
-                    <h3>Links</h3>
-                    <ul class="lh-link-list">
-                        @foreach (var l in _selectedTitle.Links)
-                        {
-                            <li>
-                                <label class="lh-link-row">
-                                    <input type="checkbox" checked="@_selectedLinkIds.Contains(l.Id)" @onchange="@(e => ToggleLink(l.Id, (bool)e.Value!))" />
-                                    <span class="lh-link-host">@l.Host</span>
-                                    @if (!string.IsNullOrEmpty(l.Quality)) { <span class="lh-tag lh-tag-quality">@l.Quality</span> }
-                                    @if (l.SizeBytes.HasValue) { <span class="lh-muted">@FormatSize(l.SizeBytes.Value)</span> }
-                                    @if (!string.IsNullOrEmpty(l.AudioLangs)) { <span class="lh-muted">@l.AudioLangs</span> }
-                                </label>
-                            </li>
-                        }
-                    </ul>
-                </section>
-            }
-
-            @foreach (var ep in _selectedTitle.Episodes)
-            {
-                <section class="lh-modal-section">
-                    <h3>@FormatEpisodeHeader(ep)</h3>
-                    <ul class="lh-link-list">
-                        @foreach (var l in ep.Links)
-                        {
-                            <li>
-                                <label class="lh-link-row">
-                                    <input type="checkbox" checked="@_selectedLinkIds.Contains(l.Id)" @onchange="@(e => ToggleLink(l.Id, (bool)e.Value!))" />
-                                    <span class="lh-link-host">@l.Host</span>
-                                    @if (!string.IsNullOrEmpty(l.Quality)) { <span class="lh-tag lh-tag-quality">@l.Quality</span> }
-                                    @if (l.SizeBytes.HasValue) { <span class="lh-muted">@FormatSize(l.SizeBytes.Value)</span> }
-                                </label>
-                            </li>
-                        }
-                    </ul>
-                </section>
-            }
-
-            <footer class="lh-modal-actions">
-                <span class="lh-muted">@_selectedLinkIds.Count selected</span>
-                <button class="lh-primary" @onclick="SendSelected" disabled="@(_selectedLinkIds.Count == 0 || _sending)">
-                    @(_sending ? "Sending…" : "Send to NAS")
-                </button>
-            </footer>
-            @if (_sendMessage is not null)
-            {
-                <p class="@(_sendOk ? "lh-muted" : "lh-error")">@_sendMessage</p>
-            }
-        </div>
-    </div>
+    <TitleDetailModal
+        Title="_selectedTitle"
+        SelectedLinkIds="_selectedLinkIds"
+        Sending="_sending"
+        SendOk="_sendOk"
+        SendMessage="_sendMessage"
+        OnClose="CloseTitle"
+        OnToggleLink="@(args => ToggleLink(args.LinkId, args.On))"
+        OnSend="SendSelected" />
 }
 
 @code {
@@ -293,6 +136,9 @@
     private bool _sending;
     private bool _sendOk;
     private string? _sendMessage;
+    // Separate from _sendMessage so a transient search error doesn't appear
+    // inside the open title-detail modal where it makes no sense.
+    private string? _searchError;
 
     private int TotalPages => _page is null || _page.PageSize == 0 ? 1 : Math.Max(1, (int)Math.Ceiling(_page.Total / (double)_page.PageSize));
 
@@ -312,28 +158,37 @@
     {
         _searching = true;
         StateHasChanged();
-        try { _page = await Api.SearchCatalogAsync(_query); }
-        catch (Exception ex) { _sendMessage = ex.Message; _sendOk = false; }
+        try
+        {
+            _page = await Api.SearchCatalogAsync(_query);
+            _searchError = null;
+        }
+        catch (Exception ex) { _searchError = ex.Message; }
         finally { _searching = false; }
     }
 
-    private async void ScheduleSearch()
+    private Task ScheduleSearch()
     {
+        // Cancel the previous pending debounce so rapid filter changes only
+        // run the latest one. Capture a new CTS that we own for this call.
         _debounce?.Cancel();
         _debounce = new CancellationTokenSource();
         var token = _debounce.Token;
-        try
+        return InvokeAsync(async () =>
         {
-            await Task.Delay(250, token);
-            _query.Page = 1;
-            await InvokeAsync(DoSearch);
-        }
-        catch (TaskCanceledException) { }
-    }
-
-    private void OnSearchKeyUp(KeyboardEventArgs e)
-    {
-        ScheduleSearch();
+            try
+            {
+                await Task.Delay(250, token);
+                _query.Page = 1;
+                // Refresh size-derived query fields before searching. The
+                // CatalogFilters component already pushed _sizeMin/MaxGb back
+                // to us via callbacks; we convert here.
+                _query.SizeMinBytes = _sizeMinGb.HasValue ? (long)(_sizeMinGb.Value * 1024 * 1024 * 1024) : null;
+                _query.SizeMaxBytes = _sizeMaxGb.HasValue ? (long)(_sizeMaxGb.Value * 1024 * 1024 * 1024) : null;
+                await DoSearch();
+            }
+            catch (TaskCanceledException) { /* superseded by a newer search */ }
+        });
     }
 
     private async Task SetCategory(string? cat)
@@ -341,23 +196,6 @@
         _query.Category = cat;
         _query.Page = 1;
         await DoSearch();
-    }
-
-    private string CategoryClass(string? cat) =>
-        (_query.Category ?? "") == (cat ?? "") ? "lh-chip lh-chip-on" : "lh-chip";
-
-    private void ToggleSet(List<string> set, string value, bool on)
-    {
-        if (on) { if (!set.Contains(value)) set.Add(value); }
-        else set.Remove(value);
-        ScheduleSearch();
-    }
-
-    private void OnSizeChange()
-    {
-        _query.SizeMinBytes = _sizeMinGb.HasValue ? (long)(_sizeMinGb.Value * 1024 * 1024 * 1024) : null;
-        _query.SizeMaxBytes = _sizeMaxGb.HasValue ? (long)(_sizeMaxGb.Value * 1024 * 1024 * 1024) : null;
-        ScheduleSearch();
     }
 
     private async Task NextPage()
@@ -382,7 +220,8 @@
         _selectedTitle = await Api.GetTitleAsync(id);
         _selectedLinkIds = new HashSet<int>();
         _sendMessage = null;
-        // Pre-select the best link by hoster priority (1fichier > rapidgator > …) and best quality.
+        // Pre-select the best link by hoster priority (1fichier > rapidgator > …)
+        // and largest size.
         if (_selectedTitle is not null)
         {
             var best = _selectedTitle.Links
@@ -412,19 +251,15 @@
             _sendOk = res.Ok;
             _sendMessage = res.Ok
                 ? $"Sent {res.Submitted} link(s) to DSM ({res.TaskIds.Count} task(s) created)."
-                : $"Failed: {res.Error}";
+                : (res.Error ?? "Send failed.");
         }
         catch (Exception ex) { _sendOk = false; _sendMessage = ex.Message; }
         finally { _sending = false; }
     }
 
-    private static string FormatEpisodeHeader(CatalogEpisode ep)
-    {
-        if (ep.IsFullSeason) return $"Season {ep.SeasonNumber} (full)";
-        var label = $"S{ep.SeasonNumber:D2}E{ep.EpisodeNumber:D2}";
-        return string.IsNullOrEmpty(ep.EpisodeName) ? label : $"{label} {ep.EpisodeName}";
-    }
-
+    // Hoster pre-select ordering. Hardcoded for now; the audit flagged that
+    // this should read user-configured HosterPriority instead, but plumbing
+    // settings through the catalog page is a separate change.
     private static int HostRank(string host)
     {
         var h = host.ToLowerInvariant();
@@ -433,14 +268,5 @@
         if (h.Contains("uploady")) return 2;
         if (h.Contains("nitroflare")) return 3;
         return 9;
-    }
-
-    private static string FormatSize(long bytes)
-    {
-        const double GB = 1024d * 1024 * 1024;
-        const double MB = 1024d * 1024;
-        if (bytes >= GB) return $"{bytes / GB:0.0} GB";
-        if (bytes >= MB) return $"{bytes / MB:0.0} MB";
-        return $"{bytes / 1024d:0.0} KB";
     }
 }

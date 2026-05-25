@@ -1,0 +1,67 @@
+@* TMDB enrichment configuration + catalog stats + retry buttons for failed enrichments
+   (improvement #8). The retry buttons are routed back to the parent via EventCallback
+   so the JS confirm() dialog stays inside the page that owns IJSRuntime. *@
+
+<section class="lh-section">
+    <h2>Catalog: TMDB enrichment</h2>
+    <p class="lh-muted">
+        Year, genre, rating, runtime and language filters need TMDB metadata.
+        Sign up free at
+        <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org/settings/api</a>
+        and paste the API key (v3) below. The background enricher will work
+        through your catalog automatically; you can keep using the app.
+    </p>
+    <label class="lh-field">
+        <span>TMDB API key (leave blank to keep)</span>
+        <InputText @bind-Value="Form.TmdbApiKey" type="password" autocomplete="off" />
+    </label>
+    <label class="lh-field lh-field-row">
+        <InputCheckbox @bind-Value="Form.TmdbEnrichmentEnabled" />
+        <span>Enable background enrichment</span>
+    </label>
+    <label class="lh-field">
+        <span>Parallel workers (1-8)</span>
+        <InputNumber @bind-Value="Form.TmdbEnrichmentConcurrency" min="1" max="8" />
+    </label>
+
+    @if (Stats is not null)
+    {
+        <div class="lh-row lh-stats">
+            <span><strong>@Stats.Titles.ToString("N0")</strong> titles</span>
+            <span><strong>@Stats.Links.ToString("N0")</strong> links</span>
+            <span><strong>@Stats.Enriched.ToString("N0")</strong> enriched</span>
+            <span><strong>@Stats.EnrichmentFailed.ToString("N0")</strong> failed</span>
+            <span class="lh-muted">enricher: @Stats.EnrichmentRunState</span>
+        </div>
+
+        @if (Stats.EnrichmentFailed > 0)
+        {
+            <div class="lh-row">
+                <button type="button" class="lh-secondary" @onclick="OnRetryTransient"
+                        disabled="@(Resetting || Stats.EnrichmentFailedTransient == 0)">
+                    Retry transient failures only (@Stats.EnrichmentFailedTransient.ToString("N0"))
+                </button>
+                <button type="button" class="lh-secondary" @onclick="OnRetryAll" disabled="@Resetting">
+                    Retry all failed (@Stats.EnrichmentFailed.ToString("N0"))
+                </button>
+            </div>
+            <p class="lh-muted">
+                Transient failures = SQLite contention or 30 s command timeout. Safe to retry without spending TMDB calls on titles that genuinely don't match.
+            </p>
+            @if (ResetMessage is not null)
+            {
+                <p class="@(ResetIsError ? "lh-error" : "lh-muted")">@ResetMessage</p>
+            }
+        }
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public SettingsFormModel Form { get; set; } = default!;
+    [Parameter] public CatalogStats? Stats { get; set; }
+    [Parameter] public bool Resetting { get; set; }
+    [Parameter] public bool ResetIsError { get; set; }
+    [Parameter] public string? ResetMessage { get; set; }
+    [Parameter] public EventCallback OnRetryTransient { get; set; }
+    [Parameter] public EventCallback OnRetryAll { get; set; }
+}

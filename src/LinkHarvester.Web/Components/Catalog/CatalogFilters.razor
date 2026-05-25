@@ -1,0 +1,156 @@
+@* Sidebar of catalog filters: search box, category chips, year/rating ranges,
+   genres, qualities, hosts, audio, runtime, size, and the "TMDB-enriched only"
+   toggle. All filter state lives in the parent's CatalogSearchQuery; this
+   component just renders it and raises OnSearchChanged whenever the user
+   tweaks something. *@
+
+<aside class="lh-filters">
+    <div class="lh-search">
+        <input type="text" placeholder="Search titles…"
+               @bind="Query.Q" @bind:event="oninput" @onkeyup="OnSearchKeyUp" />
+    </div>
+
+    @if (Facets is not null)
+    {
+        <details class="lh-filter-group" open>
+            <summary>Category</summary>
+            <button class="@CategoryClass(null)" @onclick="() => OnCategoryChanged.InvokeAsync(null)">All</button>
+            @foreach (var c in Facets.Categories)
+            {
+                <button class="@CategoryClass(c.Key)" @onclick="() => OnCategoryChanged.InvokeAsync(c.Key)">
+                    @c.Key <span class="lh-count">@c.Count</span>
+                </button>
+            }
+        </details>
+
+        <details class="lh-filter-group" open>
+            <summary>Year</summary>
+            <div class="lh-range">
+                <input type="number" placeholder="from" @bind="Query.YearMin" @bind:after="Notify" />
+                <input type="number" placeholder="to" @bind="Query.YearMax" @bind:after="Notify" />
+            </div>
+        </details>
+
+        <details class="lh-filter-group" open>
+            <summary>Rating</summary>
+            <div class="lh-range">
+                <input type="number" step="0.1" min="0" max="10" placeholder="min" @bind="Query.RatingMin" @bind:after="Notify" />
+            </div>
+        </details>
+
+        <details class="lh-filter-group">
+            <summary>Genres</summary>
+            @foreach (var g in Genres)
+            {
+                <label class="lh-check">
+                    <input type="checkbox" checked="@Query.Genres.Contains(g.Key)"
+                           @onchange="@(e => ToggleSet(Query.Genres, g.Key, (bool)e.Value!))" />
+                    <span>@g.Key</span>
+                    <span class="lh-count">@g.Count</span>
+                </label>
+            }
+        </details>
+
+        <details class="lh-filter-group">
+            <summary>Quality</summary>
+            @foreach (var q in Facets.Qualities)
+            {
+                <label class="lh-check">
+                    <input type="checkbox" checked="@Query.Qualities.Contains(q.Key)"
+                           @onchange="@(e => ToggleSet(Query.Qualities, q.Key, (bool)e.Value!))" />
+                    <span>@q.Key</span>
+                    <span class="lh-count">@q.Count</span>
+                </label>
+            }
+        </details>
+
+        <details class="lh-filter-group">
+            <summary>Hoster</summary>
+            @foreach (var h in Facets.Hosts)
+            {
+                <label class="lh-check">
+                    <input type="checkbox" checked="@Query.Hosts.Contains(h.Key.ToLowerInvariant())"
+                           @onchange="@(e => ToggleSet(Query.Hosts, h.Key.ToLowerInvariant(), (bool)e.Value!))" />
+                    <span>@h.Key</span>
+                    <span class="lh-count">@h.Count</span>
+                </label>
+            }
+        </details>
+
+        <details class="lh-filter-group">
+            <summary>Audio</summary>
+            @foreach (var a in Facets.Audio.Take(15))
+            {
+                <label class="lh-check">
+                    <input type="checkbox" checked="@Query.AudioLangs.Contains(a.Key)"
+                           @onchange="@(e => ToggleSet(Query.AudioLangs, a.Key, (bool)e.Value!))" />
+                    <span>@a.Key</span>
+                    <span class="lh-count">@a.Count</span>
+                </label>
+            }
+        </details>
+
+        <details class="lh-filter-group">
+            <summary>Runtime (minutes)</summary>
+            <div class="lh-range">
+                <input type="number" placeholder="from" @bind="Query.RuntimeMin" @bind:after="Notify" />
+                <input type="number" placeholder="to" @bind="Query.RuntimeMax" @bind:after="Notify" />
+            </div>
+        </details>
+
+        <details class="lh-filter-group">
+            <summary>Size (GB)</summary>
+            <div class="lh-range">
+                <input type="number" step="0.1" placeholder="min" @bind="SizeMinGb" @bind:after="SizeChanged" />
+                <input type="number" step="0.1" placeholder="max" @bind="SizeMaxGb" @bind:after="SizeChanged" />
+            </div>
+        </details>
+
+        <details class="lh-filter-group">
+            <summary>Other</summary>
+            <label class="lh-check">
+                <input type="checkbox" @bind="Query.HasMetadataOnly" @bind:after="Notify" />
+                <span>TMDB-enriched only</span>
+            </label>
+        </details>
+
+        <button class="lh-secondary lh-clear" @onclick="OnClearFilters">Clear filters</button>
+    }
+</aside>
+
+@code {
+    [Parameter, EditorRequired] public CatalogSearchQuery Query { get; set; } = default!;
+    [Parameter] public CatalogFacets? Facets { get; set; }
+    [Parameter] public List<FacetEntry> Genres { get; set; } = new();
+    [Parameter] public double? SizeMinGb { get; set; }
+    [Parameter] public double? SizeMaxGb { get; set; }
+    [Parameter] public EventCallback<double?> SizeMinGbChanged { get; set; }
+    [Parameter] public EventCallback<double?> SizeMaxGbChanged { get; set; }
+    [Parameter] public EventCallback OnSearchChanged { get; set; }
+    [Parameter] public EventCallback<string?> OnCategoryChanged { get; set; }
+    [Parameter] public EventCallback OnClearFilters { get; set; }
+
+    private string CategoryClass(string? cat) =>
+        (Query.Category ?? "") == (cat ?? "") ? "lh-chip lh-chip-on" : "lh-chip";
+
+    private Task Notify() => OnSearchChanged.InvokeAsync();
+
+    private void ToggleSet(List<string> set, string value, bool on)
+    {
+        if (on) { if (!set.Contains(value)) set.Add(value); }
+        else set.Remove(value);
+        _ = OnSearchChanged.InvokeAsync();
+    }
+
+    private async Task SizeChanged()
+    {
+        // Parent owns the GB ↔ bytes conversion + Query.Size{Min,Max}Bytes mutation.
+        // We just notify which boundary changed; parent's @bind:after pattern then
+        // triggers the actual search.
+        await SizeMinGbChanged.InvokeAsync(SizeMinGb);
+        await SizeMaxGbChanged.InvokeAsync(SizeMaxGb);
+        await OnSearchChanged.InvokeAsync();
+    }
+
+    private Task OnSearchKeyUp(KeyboardEventArgs e) => OnSearchChanged.InvokeAsync();
+}

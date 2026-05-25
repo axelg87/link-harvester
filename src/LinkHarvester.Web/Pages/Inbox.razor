@@ -170,12 +170,5 @@
         _ => c.Kind
     };
 
-    private static string FormatSize(long bytes)
-    {
-        const double GB = 1024d * 1024 * 1024;
-        const double MB = 1024d * 1024;
-        if (bytes >= GB) return $"{bytes / GB:0.0} GB";
-        if (bytes >= MB) return $"{bytes / MB:0.0} MB";
-        return $"{bytes / 1024d:0.0} KB";
-    }
+    private static string FormatSize(long bytes) => FormatHelpers.FormatSize(bytes);
 }

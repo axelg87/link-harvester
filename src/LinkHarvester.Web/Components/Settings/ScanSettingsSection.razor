@@ -1,0 +1,17 @@
+@* Scanner cadence + scan-on-startup toggle. *@
+
+<section class="lh-section">
+    <h2>Scanning</h2>
+    <label class="lh-field">
+        <span>Auto-scan interval (minutes)</span>
+        <InputNumber @bind-Value="Form.ScanIntervalMinutes" min="1" />
+    </label>
+    <label class="lh-field lh-field-row">
+        <InputCheckbox @bind-Value="Form.ScanOnStartup" />
+        <span>Scan once on app startup</span>
+    </label>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public SettingsFormModel Form { get; set; } = default!;
+}
