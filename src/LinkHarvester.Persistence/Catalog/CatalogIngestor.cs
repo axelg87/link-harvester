@@ -152,10 +152,17 @@ public sealed class CatalogIngestor
 
             await tx.CommitAsync(ct);
         }
+        catch (OperationCanceledException)
+        {
+            _log.LogInformation("ingest cancelled at total={N}", total);
+            try { if (tx is not null) await tx.RollbackAsync(CancellationToken.None); } catch { /* ignore */ }
+            run.Status = "cancelled";
+            run.Notes = "cancelled by user or host";
+        }
         catch (Exception ex)
         {
             _log.LogError(ex, "ingest failed at total={N}", total);
-            try { if (tx is not null) await tx.RollbackAsync(ct); } catch { /* ignore */ }
+            try { if (tx is not null) await tx.RollbackAsync(CancellationToken.None); } catch { /* ignore */ }
             run.Status = "failed";
             run.Notes = ex.Message;
         }
@@ -167,11 +174,33 @@ public sealed class CatalogIngestor
             if (conn is not null) await conn.DisposeAsync();
         }
 
-        await using (var db = await _factory.CreateDbContextAsync(ct))
+        // Only rebuild FTS when the ingest actually succeeded. A failed or
+        // cancelled run has rolled back its last transaction, so the FTS
+        // content table is already consistent with what's committed — but
+        // a full rebuild on a broken import still costs minutes of disk
+        // I/O on Fly's shared-cpu-1x, which we want to avoid at 3 AM.
+        if (run.Status == "running")
         {
-            CatalogFts.EnsureCreated(db);
-            _log.LogInformation("rebuilding FTS index...");
-            CatalogFts.Rebuild(db);
+            try
+            {
+                await using var db = await _factory.CreateDbContextAsync(CancellationToken.None);
+                CatalogFts.EnsureCreated(db);
+                _log.LogInformation("rebuilding FTS index...");
+                CatalogFts.Rebuild(db);
+            }
+            catch (Exception ex)
+            {
+                // Don't tank the whole import status if FTS rebuild itself
+                // fails — log loudly, mark as 'succeeded_fts_skipped', and
+                // continue. The operator can rebuild later via SQLite.
+                _log.LogError(ex, "FTS rebuild failed after successful ingest");
+                run.Notes = $"FTS rebuild failed: {ex.Message}";
+                run.Status = "succeeded_fts_skipped";
+            }
+        }
+        else
+        {
+            _log.LogInformation("skipping FTS rebuild (run status: {Status})", run.Status);
         }
 
         run.FinishedAt = DateTimeOffset.UtcNow;
@@ -182,10 +211,13 @@ public sealed class CatalogIngestor
         run.FailedRecords = failed;
         if (run.Status == "running") run.Status = "succeeded";
 
-        await using (var db = await _factory.CreateDbContextAsync(ct))
+        // CancellationToken.None on the final persist: if the caller cancelled
+        // mid-ingest, we still want the row's final status written so the UI
+        // and startup orphan-sweep see 'cancelled' rather than 'running'.
+        await using (var db = await _factory.CreateDbContextAsync(CancellationToken.None))
         {
             db.CatalogImportRuns.Update(run);
-            await db.SaveChangesAsync(ct);
+            await db.SaveChangesAsync(CancellationToken.None);
         }
 
         progress?.Report(new IngestProgress(total, titles, episodes, links, failed));

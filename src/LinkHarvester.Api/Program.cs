@@ -112,6 +112,24 @@ using (var scope = app.Services.CreateScope())
     {
         startupLog.LogInformation("reset {Count} transient enrichment failures (SQLite contention residue)", resetCount);
     }
+
+    // Sweep orphaned catalog import runs. A row stuck in 'running' state
+    // after process restart can only mean we crashed or were killed mid-
+    // ingest — the in-memory CatalogIngestionRunner is gone, so the row
+    // is unrecoverable. Marking it 'failed' unblocks the import-status UI
+    // and lets a new import start without the 'another ingestion is
+    // already running' guard tripping. FinishedAt stays NULL: we don't
+    // actually know when the orphan died, and the column is nullable for
+    // exactly this reason.
+    var orphanedCount = await db.Database.ExecuteSqlRawAsync(@"
+        UPDATE CatalogImportRuns
+        SET Status = 'failed',
+            Notes = COALESCE(Notes, '') || ' [orphaned by app restart]'
+        WHERE Status = 'running';");
+    if (orphanedCount > 0)
+    {
+        startupLog.LogWarning("marked {Count} orphaned catalog import run(s) as failed (app restarted mid-ingest)", orphanedCount);
+    }
 }
 
 app.UseSerilogRequestLogging(opts =>
