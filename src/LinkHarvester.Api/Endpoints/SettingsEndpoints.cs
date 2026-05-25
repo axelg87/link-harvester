@@ -14,6 +14,10 @@ public static class SettingsEndpoints
             var c = s.Current;
             return Results.Ok(new SettingsDto(
                 SynologyBaseUrl: c.SynologyBaseUrl,
+                SynologyConnectionMode: c.SynologyConnectionMode.ToString(),
+                SynologyQuickConnectId: c.SynologyQuickConnectId,
+                SynologyResolvedBaseUrl: c.SynologyResolvedBaseUrl,
+                SynologyResolvedAt: c.SynologyResolvedAt,
                 SynologyUsername: c.SynologyUsername,
                 SynologyPasswordSet: !string.IsNullOrEmpty(c.SynologyPassword),
                 SynologyOtpCode: c.SynologyOtpCode,
@@ -33,10 +37,19 @@ public static class SettingsEndpoints
         grp.MapPut("", async (UpdateSettingsDto req, ISettingsService s, CancellationToken ct) =>
         {
             var current = s.Current;
+            var requestedMode = ParseSynologyConnectionMode(req.SynologyConnectionMode)
+                ?? current.SynologyConnectionMode;
+            var requestedQuickConnectId = req.SynologyQuickConnectId ?? current.SynologyQuickConnectId;
+            var quickConnectIdentityChanged = requestedMode != current.SynologyConnectionMode
+                || !string.Equals(requestedQuickConnectId, current.SynologyQuickConnectId, StringComparison.OrdinalIgnoreCase);
             // Empty password fields mean "leave unchanged".
             var snapshot = current with
             {
                 SynologyBaseUrl = req.SynologyBaseUrl ?? current.SynologyBaseUrl,
+                SynologyConnectionMode = requestedMode,
+                SynologyQuickConnectId = requestedQuickConnectId,
+                SynologyResolvedBaseUrl = quickConnectIdentityChanged ? string.Empty : current.SynologyResolvedBaseUrl,
+                SynologyResolvedAt = quickConnectIdentityChanged ? null : current.SynologyResolvedAt,
                 SynologyUsername = req.SynologyUsername ?? current.SynologyUsername,
                 SynologyPassword = string.IsNullOrEmpty(req.SynologyPassword) ? current.SynologyPassword : req.SynologyPassword,
                 SynologyOtpCode = req.SynologyOtpCode,
@@ -53,6 +66,28 @@ public static class SettingsEndpoints
             };
             await s.UpdateAsync(snapshot, ct);
             return Results.Ok();
+        });
+
+        grp.MapPost("/resolve-quickconnect", async (ResolveQuickConnectDto req, IQuickConnectEndpointService endpoints, CancellationToken ct) =>
+        {
+            try
+            {
+                var result = await endpoints.RefreshAsync(req.QuickConnectId, ct);
+                return Results.Ok(new QuickConnectResolveResult(
+                    Ok: true,
+                    BaseUrl: result.BaseUrl,
+                    ResolvedAt: result.ResolvedAt,
+                    ProbedUrls: result.ProbedUrls.ToList(),
+                    Error: null));
+            }
+            catch (QuickConnectResolveException ex)
+            {
+                return Results.Ok(new QuickConnectResolveResult(false, null, null, new(), ex.Message));
+            }
+            catch (Exception ex)
+            {
+                return Results.Ok(new QuickConnectResolveResult(false, null, null, new(), ex.Message));
+            }
         });
 
         grp.MapPost("/test-synology", async (IDownloadStationClient dsm, CancellationToken ct) =>
@@ -76,17 +111,34 @@ public static class SettingsEndpoints
         return routes;
     }
 
+    private static SynologyConnectionMode? ParseSynologyConnectionMode(string? value)
+        => Enum.TryParse<SynologyConnectionMode>(value, ignoreCase: true, out var mode)
+            ? mode
+            : null;
+
     public sealed record SettingsDto(
-        string SynologyBaseUrl, string SynologyUsername, bool SynologyPasswordSet,
+        string SynologyBaseUrl, string SynologyConnectionMode, string SynologyQuickConnectId,
+        string SynologyResolvedBaseUrl, DateTimeOffset? SynologyResolvedAt,
+        string SynologyUsername, bool SynologyPasswordSet,
         string? SynologyOtpCode, string SynologyMovieDestination, string SynologySeriesDestination,
         int ScanIntervalMinutes, bool ScanOnStartup, List<string> HosterPriority,
         string AuthUsername, bool AuthPasswordSet,
         bool TmdbApiKeySet, bool TmdbEnrichmentEnabled, int TmdbEnrichmentConcurrency);
 
     public sealed record UpdateSettingsDto(
-        string? SynologyBaseUrl, string? SynologyUsername, string? SynologyPassword,
+        string? SynologyBaseUrl, string? SynologyConnectionMode, string? SynologyQuickConnectId,
+        string? SynologyUsername, string? SynologyPassword,
         string? SynologyOtpCode, string? SynologyMovieDestination, string? SynologySeriesDestination,
         int? ScanIntervalMinutes, bool? ScanOnStartup, List<string>? HosterPriority,
         string? AuthUsername, string? AuthPassword,
         string? TmdbApiKey, bool? TmdbEnrichmentEnabled, int? TmdbEnrichmentConcurrency);
+
+    public sealed record ResolveQuickConnectDto(string? QuickConnectId);
+
+    public sealed record QuickConnectResolveResult(
+        bool Ok,
+        string? BaseUrl,
+        DateTimeOffset? ResolvedAt,
+        List<string> ProbedUrls,
+        string? Error);
 }

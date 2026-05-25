@@ -9,6 +9,8 @@ namespace LinkHarvester.Web.Models;
 public sealed class SettingsFormModel
 {
     public string SynologyBaseUrl { get; set; } = "";
+    public string SynologyConnectionMode { get; set; } = "Direct";
+    public string SynologyQuickConnectId { get; set; } = "";
     public string SynologyUsername { get; set; } = "";
     public string SynologyPassword { get; set; } = "";
     public string? SynologyOtpCode { get; set; }
@@ -26,6 +28,8 @@ public sealed class SettingsFormModel
     public static SettingsFormModel From(Settings s) => new()
     {
         SynologyBaseUrl = s.SynologyBaseUrl,
+        SynologyConnectionMode = string.IsNullOrWhiteSpace(s.SynologyConnectionMode) ? "Direct" : s.SynologyConnectionMode,
+        SynologyQuickConnectId = s.SynologyQuickConnectId,
         SynologyUsername = s.SynologyUsername,
         SynologyPassword = "",
         SynologyOtpCode = s.SynologyOtpCode,
@@ -43,6 +47,8 @@ public sealed class SettingsFormModel
 
     public UpdateSettings ToUpdate() => new(
         SynologyBaseUrl: SynologyBaseUrl,
+        SynologyConnectionMode: SynologyConnectionMode,
+        SynologyQuickConnectId: SynologyQuickConnectId,
         SynologyUsername: SynologyUsername,
         SynologyPassword: SynologyPassword,
         SynologyOtpCode: SynologyOtpCode,

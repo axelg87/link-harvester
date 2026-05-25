@@ -22,16 +22,22 @@ public sealed class DownloadStationClient : IDownloadStationClient
 {
     private readonly HttpClient _http;
     private readonly ISettingsService _settings;
+    private readonly IQuickConnectEndpointService _quickConnectEndpoints;
     private readonly ILogger<DownloadStationClient> _log;
     private readonly SemaphoreSlim _sessionGate = new(1, 1);
     private string? _sid;
     private DateTimeOffset _sidObtainedAt;
     private string? _sidForBaseUrl;
 
-    public DownloadStationClient(HttpClient http, ISettingsService settings, ILogger<DownloadStationClient> log)
+    public DownloadStationClient(
+        HttpClient http,
+        ISettingsService settings,
+        IQuickConnectEndpointService quickConnectEndpoints,
+        ILogger<DownloadStationClient> log)
     {
         _http = http;
         _settings = settings;
+        _quickConnectEndpoints = quickConnectEndpoints;
         _log = log;
         _http.Timeout = TimeSpan.FromSeconds(30);
         _settings.Changed += () => { _sid = null; }; // force re-auth on settings change
@@ -39,19 +45,39 @@ public sealed class DownloadStationClient : IDownloadStationClient
 
     public async Task<IReadOnlyList<string>> CreateTasksAsync(IEnumerable<string> urls, string? destination, CancellationToken ct)
     {
+        try
+        {
+            return await CreateTasksCoreAsync(urls, destination, forceQuickConnectRefresh: false, ct);
+        }
+        catch (DsmException ex) when (ShouldRefreshQuickConnectEndpoint(ex))
+        {
+            _sid = null;
+            _log.LogWarning(ex, "Synology request failed against the current QuickConnect endpoint; refreshing once.");
+            return await CreateTasksCoreAsync(urls, destination, forceQuickConnectRefresh: true, ct);
+        }
+    }
+
+    private async Task<IReadOnlyList<string>> CreateTasksCoreAsync(
+        IEnumerable<string> urls,
+        string? destination,
+        bool forceQuickConnectRefresh,
+        CancellationToken ct)
+    {
         var s = _settings.Current;
-        if (string.IsNullOrWhiteSpace(s.SynologyBaseUrl))
+        var baseUrl = await _quickConnectEndpoints.EnsureResolvedBaseUrlAsync(forceQuickConnectRefresh, ct);
+        s = _settings.Current;
+        if (string.IsNullOrWhiteSpace(baseUrl))
             throw DsmException.NotConfigured("Base URL");
         if (string.IsNullOrWhiteSpace(s.SynologyUsername) || string.IsNullOrWhiteSpace(s.SynologyPassword))
             throw DsmException.NotConfigured("credentials");
         var urlList = urls.Where(u => !string.IsNullOrWhiteSpace(u)).Distinct().ToList();
 
-        await EnsureSessionAsync(ct);
+        await EnsureSessionAsync(s, baseUrl, ct);
 
         // Empty-list call is used by the settings UI as a connection test.
         if (urlList.Count == 0) return Array.Empty<string>();
 
-        var endpoint = new Uri(new Uri(s.SynologyBaseUrl), "/webapi/entry.cgi");
+        var endpoint = new Uri(new Uri(baseUrl), "/webapi/entry.cgi");
         var form = new Dictionary<string, string>
         {
             ["api"] = "SYNO.DownloadStation2.Task",
@@ -77,12 +103,12 @@ public sealed class DownloadStationClient : IDownloadStationClient
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
         {
-            throw DsmException.ForTransport(s.SynologyBaseUrl, ex);
+            throw DsmException.ForTransport(baseUrl, ex);
         }
 
         if (!resp.IsSuccessStatusCode)
         {
-            throw DsmException.ForHttp(resp.StatusCode, s.SynologyBaseUrl, body);
+            throw DsmException.ForHttp(resp.StatusCode, baseUrl, body);
         }
 
         DsmEnvelope<DsmTaskListResponse>? parsed;
@@ -90,7 +116,7 @@ public sealed class DownloadStationClient : IDownloadStationClient
         catch (JsonException) { parsed = null; }
 
         if (parsed is null)
-            throw DsmException.ForUnparseable(s.SynologyBaseUrl, body);
+            throw DsmException.ForUnparseable(baseUrl, body);
 
         if (!parsed.Success)
         {
@@ -101,7 +127,7 @@ public sealed class DownloadStationClient : IDownloadStationClient
             // DSM2 400 includes a per-URL `errors[].url` breakdown when the
             // hoster isn't accepted; surface the first failing URL.
             var firstBadUrl = parsed.Error?.Errors?.FirstOrDefault()?.Url;
-            throw DsmException.ForCode(code, s.SynologyUsername, s.SynologyBaseUrl, failedUrl: firstBadUrl);
+            throw DsmException.ForCode(code, s.SynologyUsername, baseUrl, failedUrl: firstBadUrl);
         }
 
         var ids = parsed.Data?.Task?.Select(t => t.TaskId ?? string.Empty).Where(s => s.Length > 0).ToList()
@@ -111,18 +137,17 @@ public sealed class DownloadStationClient : IDownloadStationClient
         return ids;
     }
 
-    private async Task EnsureSessionAsync(CancellationToken ct)
+    private async Task EnsureSessionAsync(AppSettingsSnapshot s, string baseUrl, CancellationToken ct)
     {
-        var s = _settings.Current;
-        if (_sid is not null && _sidForBaseUrl == s.SynologyBaseUrl
+        if (_sid is not null && _sidForBaseUrl == baseUrl
             && DateTimeOffset.UtcNow - _sidObtainedAt < TimeSpan.FromMinutes(30)) return;
         await _sessionGate.WaitAsync(ct);
         try
         {
-            if (_sid is not null && _sidForBaseUrl == s.SynologyBaseUrl
+            if (_sid is not null && _sidForBaseUrl == baseUrl
                 && DateTimeOffset.UtcNow - _sidObtainedAt < TimeSpan.FromMinutes(30)) return;
 
-            var endpoint = new Uri(new Uri(s.SynologyBaseUrl), "/webapi/entry.cgi");
+            var endpoint = new Uri(new Uri(baseUrl), "/webapi/entry.cgi");
             var form = new Dictionary<string, string>
             {
                 ["api"] = "SYNO.API.Auth",
@@ -146,28 +171,41 @@ public sealed class DownloadStationClient : IDownloadStationClient
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
             {
-                throw DsmException.ForTransport(s.SynologyBaseUrl, ex);
+                throw DsmException.ForTransport(baseUrl, ex);
             }
 
             if (!resp.IsSuccessStatusCode)
-                throw DsmException.ForHttp(resp.StatusCode, s.SynologyBaseUrl, body);
+                throw DsmException.ForHttp(resp.StatusCode, baseUrl, body);
 
             DsmEnvelope<DsmAuthResponse>? env;
             try { env = JsonSerializer.Deserialize<DsmEnvelope<DsmAuthResponse>>(body); }
             catch (JsonException) { env = null; }
 
             if (env is null)
-                throw DsmException.ForUnparseable(s.SynologyBaseUrl, body);
+                throw DsmException.ForUnparseable(baseUrl, body);
 
             if (!env.Success || env.Data?.Sid is null)
-                throw DsmException.ForCode(env.Error?.Code ?? 0, s.SynologyUsername, s.SynologyBaseUrl);
+                throw DsmException.ForCode(env.Error?.Code ?? 0, s.SynologyUsername, baseUrl);
 
             _sid = env.Data.Sid;
             _sidObtainedAt = DateTimeOffset.UtcNow;
-            _sidForBaseUrl = s.SynologyBaseUrl;
+            _sidForBaseUrl = baseUrl;
             _log.LogInformation("Synology login succeeded.");
         }
         finally { _sessionGate.Release(); }
+    }
+
+    private bool ShouldRefreshQuickConnectEndpoint(DsmException ex)
+    {
+        if (_settings.Current.SynologyConnectionMode != SynologyConnectionMode.QuickConnect)
+            return false;
+        return ex.Code is DsmException.SyntheticUnreachable
+            or DsmException.SyntheticTimeout
+            or DsmException.SyntheticUnparseable
+            or 404
+            or 502
+            or 503
+            or 504;
     }
 
     private sealed record DsmEnvelope<T>(

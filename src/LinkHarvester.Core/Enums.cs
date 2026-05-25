@@ -44,3 +44,9 @@ public enum SubmissionStatus
     Sent = 1,
     Failed = 2
 }
+
+public enum SynologyConnectionMode
+{
+    Direct = 0,
+    QuickConnect = 1
+}

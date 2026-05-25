@@ -22,7 +22,18 @@ public sealed record AppSettingsSnapshot(
     // TMDB enrichment
     string TmdbApiKey,
     bool TmdbEnrichmentEnabled,
-    int TmdbEnrichmentConcurrency);
+    int TmdbEnrichmentConcurrency,
+    SynologyConnectionMode SynologyConnectionMode = SynologyConnectionMode.Direct,
+    string SynologyQuickConnectId = "",
+    string SynologyResolvedBaseUrl = "",
+    DateTimeOffset? SynologyResolvedAt = null)
+{
+    public string EffectiveSynologyBaseUrl =>
+        SynologyConnectionMode == SynologyConnectionMode.QuickConnect
+        && !string.IsNullOrWhiteSpace(SynologyResolvedBaseUrl)
+            ? SynologyResolvedBaseUrl
+            : SynologyBaseUrl;
+}
 
 public interface ISettingsService
 {

@@ -49,6 +49,9 @@ namespace LinkHarvester.Persistence.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("SynologyConnectionMode")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("SynologyMovieDestination")
                         .IsRequired()
                         .HasMaxLength(256)
@@ -60,6 +63,19 @@ namespace LinkHarvester.Persistence.Migrations
                     b.Property<string>("SynologyPasswordEncrypted")
                         .IsRequired()
                         .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SynologyQuickConnectId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("SynologyResolvedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SynologyResolvedBaseUrl")
+                        .IsRequired()
+                        .HasMaxLength(256)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("SynologySeriesDestination")

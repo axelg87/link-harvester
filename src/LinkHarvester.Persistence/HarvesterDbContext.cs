@@ -86,6 +86,8 @@ public class HarvesterDbContext : DbContext
         b.Entity<AppSettingsEntity>(e =>
         {
             e.Property(s => s.SynologyBaseUrl).HasMaxLength(256);
+            e.Property(s => s.SynologyQuickConnectId).HasMaxLength(128);
+            e.Property(s => s.SynologyResolvedBaseUrl).HasMaxLength(256);
             e.Property(s => s.SynologyUsername).HasMaxLength(128);
             e.Property(s => s.SynologyPasswordEncrypted).HasMaxLength(2048);
             e.Property(s => s.AuthUsername).HasMaxLength(128);
