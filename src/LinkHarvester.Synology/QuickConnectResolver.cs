@@ -40,6 +40,7 @@ public sealed class QuickConnectResolver : IQuickConnectResolver
 
         var endpoints = new Queue<Uri>();
         var seenEndpoints = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var resolverEndpoints = new List<Uri>();
         endpoints.Enqueue(GlobalResolver);
 
         var candidates = new List<string>();
@@ -49,11 +50,12 @@ public sealed class QuickConnectResolver : IQuickConnectResolver
         {
             var endpoint = endpoints.Dequeue();
             if (!seenEndpoints.Add(endpoint.Host)) continue;
+            resolverEndpoints.Add(endpoint);
 
             JsonDocument doc;
             try
             {
-                doc = await QueryResolverAsync(endpoint, id, ct);
+                doc = await QueryResolverAsync(endpoint, id, "get_server_info", stopWhenSuccess: false, ct);
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
             {
@@ -93,18 +95,72 @@ public sealed class QuickConnectResolver : IQuickConnectResolver
             }
         }
 
+        for (var endpointIndex = 0; endpointIndex < resolverEndpoints.Count; endpointIndex++)
+        {
+            var endpoint = resolverEndpoints[endpointIndex];
+            JsonDocument doc;
+            try
+            {
+                doc = await QueryResolverAsync(endpoint, id, "request_tunnel", stopWhenSuccess: true, ct);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+            {
+                _log.LogWarning(ex, "QuickConnect tunnel request {Host} failed for ID {QuickConnectId}.", endpoint.Host, id);
+                continue;
+            }
+
+            using (doc)
+            {
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) continue;
+                foreach (var item in doc.RootElement.EnumerateArray())
+                {
+                    foreach (var site in ReadStringArray(item, "sites"))
+                    {
+                        if (Uri.TryCreate($"https://{site}/Serv.php", UriKind.Absolute, out var siteUri)
+                            && resolverEndpoints.All(e => !string.Equals(e.Host, siteUri.Host, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            resolverEndpoints.Add(siteUri);
+                        }
+                    }
+
+                    if (ReadInt(item, "errno") != 0) continue;
+                    candidates.AddRange(ReadCandidates(item));
+                }
+            }
+
+            var distinctCandidates = candidates
+                .Where(c => !string.IsNullOrWhiteSpace(c))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            foreach (var candidate in distinctCandidates)
+            {
+                if (probeAttempts.Contains(candidate, StringComparer.OrdinalIgnoreCase)) continue;
+                probeAttempts.Add(candidate);
+                if (await IsDsmDownloadStationEndpointAsync(candidate, ct))
+                {
+                    return new QuickConnectResolution(id, candidate, probeAttempts, DateTimeOffset.UtcNow);
+                }
+            }
+        }
+
         var attempted = probeAttempts.Count == 0
             ? "No DSM endpoint candidates were returned by QuickConnect."
             : $"Tried {probeAttempts.Count} QuickConnect endpoint candidate(s), but none returned DSM DownloadStation API metadata.";
         throw new QuickConnectResolveException(attempted);
     }
 
-    private async Task<JsonDocument> QueryResolverAsync(Uri endpoint, string quickConnectId, CancellationToken ct)
+    private async Task<JsonDocument> QueryResolverAsync(
+        Uri endpoint,
+        string quickConnectId,
+        string command,
+        bool stopWhenSuccess,
+        CancellationToken ct)
     {
         var payload = new[]
         {
-            new QuickConnectRequest("dsm_portal_https", quickConnectId),
-            new QuickConnectRequest("dsm_portal", quickConnectId)
+            new QuickConnectRequest(command, "dsm_portal_https", quickConnectId, stop_when_success: stopWhenSuccess),
+            new QuickConnectRequest(command, "dsm_portal", quickConnectId, stop_when_success: stopWhenSuccess)
         };
         using var resp = await _http.PostAsJsonAsync(endpoint, payload, ct);
         resp.EnsureSuccessStatusCode();
@@ -200,10 +256,10 @@ public sealed class QuickConnectResolver : IQuickConnectResolver
     }
 
     private sealed record QuickConnectRequest(
+        string command,
         string id,
         string serverID,
         int version = 1,
-        string command = "get_server_info",
         bool stop_when_error = false,
         bool stop_when_success = false,
         bool is_gofile = false);
