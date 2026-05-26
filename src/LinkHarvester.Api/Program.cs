@@ -169,6 +169,7 @@ app.MapHarvesterEndpoints();
 app.MapSettingsEndpoints();
 app.MapCatalogEndpoints();
 app.MapCatalogImportEndpoints();
+app.MapBackfillEndpoints();
 app.MapSendHistoryEndpoints();
 
 app.MapFallbackToFile("index.html");

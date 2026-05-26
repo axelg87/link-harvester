@@ -42,4 +42,20 @@ public static class ZtUrls
     }
 
     public static string ExternalId(string kind, string id) => $"{kind}:{id}";
+
+    /// <summary>
+    /// Category-listing URL for a given kind and page index (1-based).
+    /// Maps backfill kinds to ZT URL slugs: films→films, series→series, mangas→mangas.
+    /// </summary>
+    public static string ListingUrl(string kind, int page)
+    {
+        var slug = kind.ToLowerInvariant() switch
+        {
+            "films" or "film" => "films",
+            "series" or "serie" => "series",
+            "mangas" or "manga" => "mangas",
+            _ => kind.ToLowerInvariant(),
+        };
+        return $"{BaseUrl}/?p={slug}&page={Math.Max(1, page)}";
+    }
 }

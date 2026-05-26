@@ -104,7 +104,12 @@ public sealed class ScanPipeline
     /// content hash, this is a no-op. Returns true if a new article row was
     /// inserted (whether for a new title or as a new variant of an existing one).
     /// </summary>
-    private async Task<bool> IngestOneAsync(IFeedSource source, RawListItem listItem, CancellationToken ct)
+    /// <summary>
+    /// Idempotent: fetch + parse + upsert one article. Returns true when a new
+    /// row was inserted, false when nothing changed. Internal so the backfill
+    /// runner can reuse the same dedup-and-promote path.
+    /// </summary>
+    internal async Task<bool> IngestOneAsync(IFeedSource source, RawListItem listItem, CancellationToken ct)
     {
         await using var db = await _factory.CreateDbContextAsync(ct);
 

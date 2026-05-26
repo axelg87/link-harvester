@@ -1,0 +1,237 @@
+@page "/backfill"
+@inject HarvesterApi Api
+@implements IDisposable
+
+<div class="lh-backfill">
+    <h2>Backfill &amp; Health</h2>
+    <p class="lh-muted">
+        Temporary admin tab. Walks ZT category pages back to a cutoff date and
+        ingests every new article. The health sweep then probes each catalog
+        link against per-hoster signatures and hides titles whose links are
+        all verifiably dead.
+    </p>
+
+    <section class="lh-card">
+        <h3>ZT Backfill</h3>
+        <div class="lh-row">
+            <label>Source
+                <select @bind="_source">
+                    <option value="zt">Zone-Téléchargement (zt)</option>
+                </select>
+            </label>
+            <label>Kind
+                <select @bind="_kind">
+                    <option value="films">Films</option>
+                    <option value="series">Series</option>
+                    <option value="mangas">Mangas</option>
+                </select>
+            </label>
+            <label>From (inclusive)
+                <input type="date" @bind="_fromDate" />
+            </label>
+            <label>Start page
+                <input type="number" min="1" @bind="_startPage" style="width:80px" />
+            </label>
+        </div>
+        <div class="lh-row">
+            <button class="lh-primary" disabled="@(_backfill?.Running ?? false)" @onclick="StartBackfill">Start backfill</button>
+            <button class="lh-secondary" disabled="@(!(_backfill?.Running ?? false))" @onclick="CancelBackfill">Cancel</button>
+        </div>
+
+        @if (_backfill is not null)
+        {
+            <div class="lh-status">
+                <div><strong>Status:</strong> @(_backfill.Running ? "running" : "idle") @(_backfill.Error is null ? "" : $"— {_backfill.Error}")</div>
+                <div>Discovered: <strong>@_backfill.Discovered</strong> · Promoted: <strong>@_backfill.Promoted</strong> · Skipped: <strong>@_backfill.Skipped</strong></div>
+                <div>Page: <strong>@_backfill.LastCompletedPage</strong> (start: @_backfill.StartPage)</div>
+                @if (_backfill.StartedAt is { } sa)
+                {
+                    <div class="lh-muted">Started @sa.ToString("u")</div>
+                }
+            </div>
+        }
+
+        @if (_backfillRuns.Count > 0)
+        {
+            <details>
+                <summary>Recent runs (@_backfillRuns.Count)</summary>
+                <table class="lh-table">
+                    <thead><tr><th>Id</th><th>Kind</th><th>From</th><th>Last page</th><th>Disc.</th><th>Prom.</th><th>Status</th><th>Started</th></tr></thead>
+                    <tbody>
+                    @foreach (var r in _backfillRuns)
+                    {
+                        <tr>
+                            <td>@r.Id</td>
+                            <td>@r.Kind</td>
+                            <td>@r.FromDate.ToString("yyyy-MM-dd")</td>
+                            <td>@r.LastCompletedPage</td>
+                            <td>@r.Discovered</td>
+                            <td>@r.Promoted</td>
+                            <td>@r.Status</td>
+                            <td>@r.StartedAt.ToString("u")</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </details>
+        }
+    </section>
+
+    <section class="lh-card">
+        <h3>Catalog health sweep</h3>
+        <div class="lh-row">
+            <label>Hoster filter (optional)
+                <input @bind="_hosterFilter" placeholder="e.g. 1Fichier" />
+            </label>
+            <label>
+                <input type="checkbox" @bind="_resume" /> Resume last unfinished
+            </label>
+        </div>
+        <div class="lh-row">
+            <button class="lh-primary" disabled="@(_sweep?.Running ?? false)" @onclick="StartSweep">Start sweep</button>
+            <button class="lh-secondary" disabled="@(!(_sweep?.Running ?? false))" @onclick="CancelSweep">Cancel</button>
+        </div>
+
+        @if (_sweep is not null)
+        {
+            <div class="lh-status">
+                <div><strong>Status:</strong> @(_sweep.Running ? "running" : "idle") @(_sweep.Error is null ? "" : $"— {_sweep.Error}")</div>
+                <div>Checked: <strong>@_sweep.Checked</strong> · Alive: <strong>@_sweep.Alive</strong> · Dead: <strong>@_sweep.Dead</strong> · Unknown: <strong>@_sweep.Unknown</strong></div>
+                <div>Hidden titles: <strong>@_sweep.HiddenTitles</strong> · Last link id: <strong>@_sweep.LastCheckedCatalogLinkId</strong></div>
+            </div>
+        }
+
+        @if (_sweepRuns.Count > 0)
+        {
+            <details>
+                <summary>Recent sweeps (@_sweepRuns.Count)</summary>
+                <table class="lh-table">
+                    <thead><tr><th>Id</th><th>Hoster</th><th>Checked</th><th>Alive</th><th>Dead</th><th>Unknown</th><th>Hidden</th><th>Status</th></tr></thead>
+                    <tbody>
+                    @foreach (var r in _sweepRuns)
+                    {
+                        <tr>
+                            <td>@r.Id</td>
+                            <td>@(r.HosterFilter ?? "<any>")</td>
+                            <td>@r.Checked</td>
+                            <td>@r.Alive</td>
+                            <td>@r.Dead</td>
+                            <td>@r.Unknown</td>
+                            <td>@r.HiddenTitles</td>
+                            <td>@r.Status</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </details>
+        }
+    </section>
+
+    <section class="lh-card">
+        <h3>Last 5 added to catalog (harvester-sourced)</h3>
+        <p class="lh-muted">Manual spot-check — confirms the backfill is doing what you expect.</p>
+        @if (_recent.Count == 0)
+        {
+            <p class="lh-muted">No harvester-promoted titles yet.</p>
+        }
+        else
+        {
+            <table class="lh-table">
+                <thead><tr><th>#</th><th>Title</th><th>Year</th><th>Category</th><th>Links</th><th>Enrichment</th><th>Hidden</th><th>First seen</th></tr></thead>
+                <tbody>
+                @foreach (var t in _recent)
+                {
+                    <tr>
+                        <td>@t.Id</td>
+                        <td>@t.TitleName</td>
+                        <td>@(t.MetaYear?.ToString() ?? "—")</td>
+                        <td>@t.CategoryName</td>
+                        <td>@t.LinkCount</td>
+                        <td>@(t.EnrichmentSource ?? "—")</td>
+                        <td>@(t.IsHidden ? $"yes ({t.HiddenReason})" : "no")</td>
+                        <td>@t.FirstSeenAt.ToString("u")</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </section>
+</div>
+
+@code {
+    private string _source = "zt";
+    private string _kind = "films";
+    private DateTime _fromDate = new DateTime(2025, 1, 1);
+    private int _startPage = 1;
+
+    private string? _hosterFilter;
+    private bool _resume = true;
+
+    private BackfillStatusDto? _backfill;
+    private SweepStatusDto? _sweep;
+    private List<BackfillRunDto> _backfillRuns = new();
+    private List<HealthSweepRunDto> _sweepRuns = new();
+    private List<RecentCatalogTitleDto> _recent = new();
+
+    private System.Threading.Timer? _poll;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAllAsync();
+        _poll = new System.Threading.Timer(async _ => await InvokeAsync(async () =>
+        {
+            await RefreshStatusOnlyAsync();
+            StateHasChanged();
+        }), null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
+    }
+
+    private async Task RefreshAllAsync()
+    {
+        _backfill = await Api.GetBackfillStatusAsync();
+        _backfillRuns = await Api.GetBackfillRunsAsync();
+        _sweep = await Api.GetSweepStatusAsync();
+        _sweepRuns = await Api.GetSweepRunsAsync();
+        _recent = await Api.GetRecentCatalogAsync(5);
+    }
+
+    private async Task RefreshStatusOnlyAsync()
+    {
+        _backfill = await Api.GetBackfillStatusAsync();
+        _sweep = await Api.GetSweepStatusAsync();
+    }
+
+    private async Task StartBackfill()
+    {
+        var iso = new DateTimeOffset(_fromDate, TimeSpan.Zero).ToString("o");
+        _backfill = await Api.StartBackfillAsync(_source, _kind, iso, _startPage);
+        await RefreshAllAsync();
+    }
+
+    private async Task CancelBackfill()
+    {
+        await Api.CancelBackfillAsync();
+    }
+
+    private async Task StartSweep()
+    {
+        _sweep = await Api.StartSweepAsync(string.IsNullOrWhiteSpace(_hosterFilter) ? null : _hosterFilter, _resume);
+        await RefreshAllAsync();
+    }
+
+    private async Task CancelSweep()
+    {
+        await Api.CancelSweepAsync();
+    }
+
+    public void Dispose() => _poll?.Dispose();
+}
+
+<style>
+    .lh-backfill { padding: 16px; max-width: 1100px; margin: 0 auto; }
+    .lh-card { border: 1px solid #ddd; border-radius: 6px; padding: 16px; margin-bottom: 16px; }
+    .lh-row { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-bottom: 8px; }
+    .lh-row label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85em; }
+    .lh-status { margin-top: 12px; padding: 10px; background: #f4f6f8; border-radius: 4px; }
+    .lh-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    .lh-table th, .lh-table td { border-bottom: 1px solid #eee; padding: 4px 8px; text-align: left; font-size: 0.9em; }
+</style>

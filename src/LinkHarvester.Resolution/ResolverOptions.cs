@@ -12,4 +12,5 @@ public sealed class ResolverOptions
 public static class NamedClients
 {
     public const string DlProtect = "dlprotect";
+    public const string LinkHealth = "linkhealth";
 }

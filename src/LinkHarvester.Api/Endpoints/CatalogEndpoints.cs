@@ -37,6 +37,7 @@ public static class CatalogEndpoints
             [FromQuery] long? sizeMaxBytes,
             [FromQuery] string? originalLanguage,
             [FromQuery] bool? hasMetadata,
+            [FromQuery] bool? includeHidden,
             [FromQuery] string sort = "popularity",
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 50,
@@ -61,6 +62,8 @@ public static class CatalogEndpoints
             }
 
             var titles = db.CatalogTitles.AsNoTracking().AsQueryable();
+            if (!(includeHidden ?? false))
+                titles = titles.Where(t => !t.IsHidden);
             if (ftsIds is not null)
             {
                 var ids = ftsIds.ToList();

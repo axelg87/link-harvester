@@ -181,4 +181,78 @@ public sealed class HarvesterApi
         resp.EnsureSuccessStatusCode();
         return (await resp.Content.ReadFromJsonAsync<ResetFailedResult>(cancellationToken: ct))!;
     }
+
+    // ── Backfill & health sweep ──────────────────────────────────────────
+    public async Task<BackfillStatusDto?> StartBackfillAsync(string source, string kind, string fromDateIso, int? startPage, CancellationToken ct = default)
+    {
+        using var resp = await _http.PostAsJsonAsync("api/backfill/start",
+            new { source, kind, fromDate = fromDateIso, startPage }, ct);
+        return await GetBackfillStatusAsync(ct);
+    }
+    public async Task CancelBackfillAsync(CancellationToken ct = default) =>
+        (await _http.PostAsync("api/backfill/cancel", null, ct)).EnsureSuccessStatusCode();
+
+    public async Task<BackfillStatusDto?> GetBackfillStatusAsync(CancellationToken ct = default) =>
+        await _http.GetFromJsonAsync<BackfillStatusDto>("api/backfill/status", ct);
+
+    public async Task<List<BackfillRunDto>> GetBackfillRunsAsync(CancellationToken ct = default) =>
+        (await _http.GetFromJsonAsync<List<BackfillRunDto>>("api/backfill/runs", ct)) ?? new();
+
+    public async Task<SweepStatusDto?> StartSweepAsync(string? hosterFilter, bool resume, CancellationToken ct = default)
+    {
+        using var resp = await _http.PostAsJsonAsync("api/backfill/sweep/start",
+            new { hosterFilter, resume }, ct);
+        return await GetSweepStatusAsync(ct);
+    }
+    public async Task CancelSweepAsync(CancellationToken ct = default) =>
+        (await _http.PostAsync("api/backfill/sweep/cancel", null, ct)).EnsureSuccessStatusCode();
+
+    public async Task<SweepStatusDto?> GetSweepStatusAsync(CancellationToken ct = default) =>
+        await _http.GetFromJsonAsync<SweepStatusDto>("api/backfill/sweep/status", ct);
+
+    public async Task<List<HealthSweepRunDto>> GetSweepRunsAsync(CancellationToken ct = default) =>
+        (await _http.GetFromJsonAsync<List<HealthSweepRunDto>>("api/backfill/sweep/runs", ct)) ?? new();
+
+    public async Task<List<RecentCatalogTitleDto>> GetRecentCatalogAsync(int take = 5, CancellationToken ct = default) =>
+        (await _http.GetFromJsonAsync<List<RecentCatalogTitleDto>>($"api/backfill/recent?take={take}", ct)) ?? new();
 }
+
+public sealed record BackfillStatusDto(
+    bool Running,
+    string? SourceId,
+    string? Kind,
+    DateTimeOffset? FromDate,
+    int StartPage,
+    int LastCompletedPage,
+    int Discovered,
+    int Promoted,
+    int Skipped,
+    DateTimeOffset? StartedAt,
+    string? Error);
+
+public sealed record BackfillRunDto(
+    int Id, string SourceId, string Kind, DateTimeOffset FromDate,
+    int StartPage, int LastCompletedPage,
+    int Discovered, int Promoted, int Skipped,
+    string Status, string? Error,
+    DateTimeOffset StartedAt, DateTimeOffset? FinishedAt);
+
+public sealed record SweepStatusDto(
+    bool Running,
+    string? HosterFilter,
+    int Checked, int Alive, int Dead, int Unknown, int HiddenTitles,
+    int LastCheckedCatalogLinkId,
+    DateTimeOffset? StartedAt,
+    string? Error);
+
+public sealed record HealthSweepRunDto(
+    int Id, string? HosterFilter, int LastCheckedCatalogLinkId,
+    int Checked, int Alive, int Dead, int Unknown, int HiddenTitles,
+    string Status, string? Error,
+    DateTimeOffset StartedAt, DateTimeOffset? FinishedAt);
+
+public sealed record RecentCatalogTitleDto(
+    int Id, string TitleName, string CategoryName, string? TitlePoster,
+    int LinkCount, bool IsHidden, string? HiddenReason,
+    DateTimeOffset FirstSeenAt, DateTimeOffset LastSeenAt,
+    int? MetaYear, string? EnrichmentSource);
