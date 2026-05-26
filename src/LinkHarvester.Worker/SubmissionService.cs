@@ -103,7 +103,24 @@ public sealed class SubmissionService
     {
         var resolved = await ResolveArticleAsync(articleId, ct);
         if (resolved.Count == 0)
-            throw new InvalidOperationException("No resolved links to send.");
+        {
+            await using var failDb = await _factory.CreateDbContextAsync(ct);
+            var failedArticle = await failDb.Articles.Include(a => a.Title).FirstAsync(a => a.Id == articleId, ct);
+            var failed = new SubmissionEntity
+            {
+                ArticleId = articleId,
+                Source = SendSourceKind.ZtArticle,
+                CatalogTitleId = failedArticle.Title.CatalogTitleId,
+                DisplayTitle = failedArticle.Title.DisplayTitle,
+                Status = SubmissionStatus.ResolutionFailed,
+                ResponseMessage = failedArticle.FailureReason ?? "No resolved links to send.",
+                SubmittedAt = DateTimeOffset.UtcNow,
+                CompletedAt = DateTimeOffset.UtcNow
+            };
+            failDb.Submissions.Add(failed);
+            await failDb.SaveChangesAsync(ct);
+            return failed;
+        }
 
         await using var db = await _factory.CreateDbContextAsync(ct);
         var article = await db.Articles
@@ -118,6 +135,11 @@ public sealed class SubmissionService
         var submission = new SubmissionEntity
         {
             ArticleId = articleId,
+            Source = SendSourceKind.ZtArticle,
+            CatalogTitleId = article.Title.CatalogTitleId,
+            DisplayTitle = article.Title.DisplayTitle,
+            Destination = dest,
+            UrlCount = urls.Count,
             SubmittedUrlsJson = JsonSerializer.Serialize(urls),
             Status = SubmissionStatus.Pending,
             SubmittedAt = DateTimeOffset.UtcNow
@@ -130,6 +152,7 @@ public sealed class SubmissionService
             var taskIds = await _dsm.CreateTasksAsync(urls, dest, ct);
             submission.Status = SubmissionStatus.Sent;
             submission.DsmTaskIdsJson = JsonSerializer.Serialize(taskIds);
+            submission.CompletedAt = DateTimeOffset.UtcNow;
             article.Status = ArticleStatus.Submitted;
             article.SubmittedAt = DateTimeOffset.UtcNow;
 
@@ -147,6 +170,9 @@ public sealed class SubmissionService
             // exception so the inbox UI shows something actionable.
             submission.Status = SubmissionStatus.Failed;
             submission.ResponseMessage = dx.HumanMessage;
+            submission.DsmErrorCode = dx.Code;
+            submission.DsmFailedUrl = dx.FailedUrl;
+            submission.CompletedAt = DateTimeOffset.UtcNow;
             _log.LogWarning(dx, "DSM rejected submission for article {Id} (code {Code})", articleId, dx.Code);
         }
         catch (Exception ex)
@@ -154,6 +180,7 @@ public sealed class SubmissionService
             // Unexpected — keep the raw message but still mark failed.
             submission.Status = SubmissionStatus.Failed;
             submission.ResponseMessage = ex.Message;
+            submission.CompletedAt = DateTimeOffset.UtcNow;
             _log.LogError(ex, "Unexpected error pushing to DSM for article {Id}", articleId);
         }
 

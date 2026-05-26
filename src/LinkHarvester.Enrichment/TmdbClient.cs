@@ -49,6 +49,34 @@ public sealed class TmdbClient
         return await resp.Content.ReadFromJsonAsync<TmdbFindResult>(cancellationToken: ct);
     }
 
+    public async Task<TmdbSearchMatch?> SearchByTitleAsync(string title, int? year, bool isSeries, string apiKey, CancellationToken ct)
+    {
+        var kind = isSeries ? "tv" : "movie";
+        var query = Uri.EscapeDataString(title);
+        var yearPart = year.HasValue
+            ? isSeries ? $"&first_air_date_year={year.Value}" : $"&year={year.Value}"
+            : string.Empty;
+        var url = $"{BaseUrl}/search/{kind}?query={query}{yearPart}&api_key={Uri.EscapeDataString(apiKey)}&language=fr-FR";
+        using var resp = await _http.GetAsync(url, ct);
+        if (resp.StatusCode == (HttpStatusCode)429)
+            throw new TmdbRateLimitException(resp.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(2));
+        if (!resp.IsSuccessStatusCode)
+        {
+            _log.LogWarning("TMDB search/{Kind} {Title} -> {Code}", kind, title, (int)resp.StatusCode);
+            return null;
+        }
+
+        var result = await resp.Content.ReadFromJsonAsync<TmdbSearchResult>(cancellationToken: ct);
+        var best = result?.Results?
+            .Where(r => r.Id > 0)
+            .OrderByDescending(r => ScoreSearchResult(r, title, year, isSeries))
+            .FirstOrDefault();
+        if (best is null) return null;
+
+        var score = ScoreSearchResult(best, title, year, isSeries);
+        return new TmdbSearchMatch(best.Id, score < 80);
+    }
+
     private async Task<TmdbDetails?> FetchAsync(string path, string apiKey, bool isSeries, CancellationToken ct)
     {
         var url = $"{BaseUrl}{path}?api_key={Uri.EscapeDataString(apiKey)}&language=fr-FR";
@@ -104,6 +132,34 @@ public sealed class TmdbClient
             return null;
         }
     }
+
+    private static int ScoreSearchResult(TmdbSearchEntry entry, string title, int? year, bool isSeries)
+    {
+        var candidateTitle = isSeries ? entry.Name : entry.Title;
+        candidateTitle ??= entry.Title ?? entry.Name ?? string.Empty;
+        var normalizedCandidate = Normalize(candidateTitle);
+        var normalizedTitle = Normalize(title);
+        var score = normalizedCandidate == normalizedTitle ? 80 : 40;
+
+        var date = isSeries ? entry.FirstAirDate : entry.ReleaseDate;
+        if (year.HasValue && !string.IsNullOrEmpty(date) && date.Length >= 4 && int.TryParse(date[..4], out var resultYear))
+        {
+            var delta = Math.Abs(resultYear - year.Value);
+            score += delta switch
+            {
+                0 => 20,
+                1 => 10,
+                _ => -20
+            };
+        }
+
+        if (entry.VoteCount > 25) score += 5;
+        if (entry.Popularity > 20) score += 5;
+        return score;
+    }
+
+    private static string Normalize(string value)
+        => new(value.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
 }
 
 public sealed class TmdbDetails
@@ -131,6 +187,24 @@ public sealed class TmdbFindResult
 public sealed class TmdbFindEntry
 {
     [JsonPropertyName("id")] public int Id { get; set; }
+}
+
+public sealed record TmdbSearchMatch(int TmdbId, bool Uncertain);
+
+public sealed class TmdbSearchResult
+{
+    [JsonPropertyName("results")] public List<TmdbSearchEntry>? Results { get; set; }
+}
+
+public sealed class TmdbSearchEntry
+{
+    [JsonPropertyName("id")] public int Id { get; set; }
+    [JsonPropertyName("title")] public string? Title { get; set; }
+    [JsonPropertyName("name")] public string? Name { get; set; }
+    [JsonPropertyName("release_date")] public string? ReleaseDate { get; set; }
+    [JsonPropertyName("first_air_date")] public string? FirstAirDate { get; set; }
+    [JsonPropertyName("popularity")] public double Popularity { get; set; }
+    [JsonPropertyName("vote_count")] public int VoteCount { get; set; }
 }
 
 public sealed class TmdbRateLimitException : Exception

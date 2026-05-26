@@ -1,6 +1,7 @@
 using System.Text.Json;
 using LinkHarvester.Core;
 using LinkHarvester.Persistence;
+using LinkHarvester.Persistence.Catalog;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -22,18 +23,21 @@ public sealed class ScanPipeline
     private readonly IDbContextFactory<HarvesterDbContext> _factory;
     private readonly IEnumerable<IFeedSource> _sources;
     private readonly IQualityScorer _scorer;
+    private readonly HarvesterCatalogPromoter _catalogPromoter;
     private readonly HarvesterOptions _opts;
     private readonly ILogger<ScanPipeline> _log;
 
     public ScanPipeline(IDbContextFactory<HarvesterDbContext> factory,
                          IEnumerable<IFeedSource> sources,
                          IQualityScorer scorer,
+                         HarvesterCatalogPromoter catalogPromoter,
                          IOptions<HarvesterOptions> opts,
                          ILogger<ScanPipeline> log)
     {
         _factory = factory;
         _sources = sources;
         _scorer = scorer;
+        _catalogPromoter = catalogPromoter;
         _opts = opts.Value;
         _log = log;
     }
@@ -130,6 +134,8 @@ public sealed class ScanPipeline
                 Year = details.Year,
                 Kind = details.Kind,
                 SeasonNumber = details.SeasonNumber,
+                ImdbId = details.ImdbId,
+                TmdbId = details.TmdbId,
                 Status = TitleStatus.New,
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow
@@ -140,6 +146,8 @@ public sealed class ScanPipeline
         else
         {
             title.DisplayTitle = details.Title;
+            title.ImdbId ??= details.ImdbId;
+            title.TmdbId ??= details.TmdbId;
             title.UpdatedAt = DateTimeOffset.UtcNow;
         }
 
@@ -189,6 +197,15 @@ public sealed class ScanPipeline
         if (existing is null)
             db.Articles.Add(article);
         await db.SaveChangesAsync(ct);
+
+        try
+        {
+            await _catalogPromoter.PromoteArticleAsync(article.Id, ct);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Could not promote article {ArticleId} to catalog.", article.Id);
+        }
 
         return existing is null;
     }

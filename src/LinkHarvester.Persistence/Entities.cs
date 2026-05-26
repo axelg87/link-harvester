@@ -11,6 +11,10 @@ public class TitleEntity
     public int? Year { get; set; }
     public TitleKind Kind { get; set; }
     public int? SeasonNumber { get; set; }
+    public int? CatalogTitleId { get; set; }
+    public DateTimeOffset? CatalogPromotedAt { get; set; }
+    public string? ImdbId { get; set; }
+    public int? TmdbId { get; set; }
 
     public TitleStatus Status { get; set; }
     public int? BestSubmittedQualityScore { get; set; }
@@ -72,13 +76,24 @@ public class ResolvedLinkEntity
 public class SubmissionEntity
 {
     public int Id { get; set; }
-    public int ArticleId { get; set; }
-    public ArticleEntity Article { get; set; } = null!;
+    public int? ArticleId { get; set; }
+    public ArticleEntity? Article { get; set; }
+    public SendSourceKind Source { get; set; } = SendSourceKind.ZtArticle;
+    public int? CatalogTitleId { get; set; }
+    public string CatalogLinkIdsJson { get; set; } = "[]";
+    public string DisplayTitle { get; set; } = string.Empty;
+    public string? Destination { get; set; }
+    public int? DsmErrorCode { get; set; }
+    public string? DsmFailedUrl { get; set; }
+    public int? ResendOfSubmissionId { get; set; }
+    public int AttemptNumber { get; set; } = 1;
+    public int UrlCount { get; set; }
     public string SubmittedUrlsJson { get; set; } = "[]";
     public string DsmTaskIdsJson { get; set; } = "[]";
     public SubmissionStatus Status { get; set; }
     public string? ResponseMessage { get; set; }
     public DateTimeOffset SubmittedAt { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
 }
 
 public class ScanRunEntity

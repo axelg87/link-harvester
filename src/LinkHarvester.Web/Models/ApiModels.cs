@@ -2,8 +2,13 @@ namespace LinkHarvester.Web.Models;
 
 public sealed record InboxCard(
     int TitleId,
+    int? CatalogTitleId,
     string DisplayTitle,
+    string? Poster,
     int? Year,
+    double? Rating,
+    List<string> Genres,
+    bool MetadataUncertain,
     string Kind,
     int? SeasonNumber,
     bool BetterAvailable,
@@ -61,6 +66,21 @@ public sealed record QuickConnectResolveResult(
     List<string> ProbedUrls,
     string? Error);
 
+public sealed record SendHistoryPage(int Total, int Page, int PageSize, List<SendAttemptSummary> Items);
+
+public sealed record SendAttemptSummary(
+    int Id,
+    string Source,
+    string Status,
+    string DisplayTitle,
+    int UrlCount,
+    DateTimeOffset SubmittedAt,
+    DateTimeOffset? CompletedAt,
+    string? ResponseMessage,
+    int? ResendOfSubmissionId);
+
+public sealed record SendResendResult(int SubmissionId, string Status, string? Response, List<string> TaskIds);
+
 // ── Catalog ──────────────────────────────────────────────────────────────
 public sealed record CatalogStats(
     int Titles,
@@ -79,17 +99,19 @@ public sealed record CatalogFacets(List<FacetEntry> Categories, List<FacetEntry>
 public sealed record SearchHit(
     int Id, string Title, string? OriginalTitle, string Category, string? Poster,
     int LinkCount, int EpisodeCount, int? Year, double? Rating, int? Runtime,
-    string? Overview, List<string> Genres, string? OriginalLanguage, string? EnrichmentSource);
+    string? Overview, List<string> Genres, string? OriginalLanguage, string? EnrichmentSource,
+    bool MetadataUncertain);
 
 public sealed record SearchPage(int Total, int Page, int PageSize, List<SearchHit> Items);
 
-public sealed record CatalogLink(int Id, string Url, string Host, string? Quality, string? AudioLangs, string? SubLangs, long? SizeBytes);
+public sealed record CatalogLink(int Id, string Url, string Host, string? Quality, string? AudioLangs, string? SubLangs, long? SizeBytes,
+    string Source = "catalog", int? HarvesterArticleId = null);
 public sealed record CatalogEpisode(int Id, int SeasonNumber, int EpisodeNumber, string? EpisodeName, bool IsFullSeason, List<CatalogLink> Links);
 public sealed record TitleDetail(
     int Id, string Title, string? OriginalTitle, string Category, string? Poster,
     int? Year, double? Rating, int? Runtime, string? Overview, List<string> Genres,
     string? OriginalLanguage, string? ImdbId, int? TmdbId,
-    List<CatalogLink> Links, List<CatalogEpisode> Episodes);
+    bool MetadataUncertain, List<CatalogLink> Links, List<CatalogEpisode> Episodes);
 
 public sealed record IngestionStatus(string State, string? Description, IngestProgress Progress,
     string? Error, DateTimeOffset? StartedAt, DateTimeOffset? FinishedAt);

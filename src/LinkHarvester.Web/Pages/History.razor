@@ -1,0 +1,128 @@
+@page "/history"
+@inject HarvesterApi Api
+
+<PageTitle>Send history</PageTitle>
+
+<div class="lh-catalog">
+    <header class="lh-catalog-head">
+        <a class="lh-link" href="/">← Inbox</a>
+        <h1>Send history</h1>
+    </header>
+
+    <div class="lh-toolbar">
+        <select @bind="_status" @bind:after="Refresh">
+            <option value="">All statuses</option>
+            <option value="Sent">Sent</option>
+            <option value="Failed">Failed</option>
+            <option value="ResolutionFailed">Resolution failed</option>
+            <option value="Pending">Pending</option>
+        </select>
+        <select @bind="_source" @bind:after="Refresh">
+            <option value="">All sources</option>
+            <option value="ZtArticle">ZT</option>
+            <option value="Catalog">Catalog</option>
+        </select>
+        <button class="lh-secondary" @onclick="Refresh">Refresh</button>
+    </div>
+
+    @if (_loading)
+    {
+        <p class="lh-muted">Loading…</p>
+    }
+    else if (_page is null || _page.Items.Count == 0)
+    {
+        <p class="lh-muted">No send attempts yet.</p>
+    }
+    else
+    {
+        <div class="lh-link-list">
+            @foreach (var item in _page.Items)
+            {
+                <div class="lh-link-row">
+                    <span class="lh-tag">@item.Source</span>
+                    <span class="@(item.Status == "Sent" ? "lh-test-ok" : "lh-test-err")">@item.Status</span>
+                    <strong>@item.DisplayTitle</strong>
+                    <span class="lh-muted">@item.UrlCount link@(item.UrlCount == 1 ? "" : "s")</span>
+                    <span class="lh-muted">@item.SubmittedAt.ToLocalTime().ToString("g")</span>
+                    @if (!string.IsNullOrEmpty(item.ResponseMessage))
+                    {
+                        <span class="lh-error">@item.ResponseMessage</span>
+                    }
+                    <button class="lh-secondary" @onclick="() => Resend(item.Id)" disabled="@_resending.Contains(item.Id)">
+                        @(_resending.Contains(item.Id) ? "Resending…" : "Resend")
+                    </button>
+                </div>
+            }
+        </div>
+        <div class="lh-pager">
+            <button class="lh-secondary" @onclick="PrevPage" disabled="@(_page.Page <= 1)">← Prev</button>
+            <span class="lh-muted">Page @_page.Page / @TotalPages</span>
+            <button class="lh-secondary" @onclick="NextPage" disabled="@(_page.Page >= TotalPages)">Next →</button>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(_message))
+    {
+        <p class="@(_messageOk ? "lh-muted" : "lh-error")">@_message</p>
+    }
+</div>
+
+@code {
+    private SendHistoryPage? _page;
+    private bool _loading = true;
+    private string? _status;
+    private string? _source;
+    private int _pageNumber = 1;
+    private readonly HashSet<int> _resending = new();
+    private string? _message;
+    private bool _messageOk;
+
+    private int TotalPages => _page is null || _page.PageSize == 0 ? 1 : Math.Max(1, (int)Math.Ceiling(_page.Total / (double)_page.PageSize));
+
+    protected override async Task OnInitializedAsync() => await Refresh();
+
+    private async Task Refresh()
+    {
+        _loading = true;
+        try { _page = await Api.GetSendHistoryAsync(_status, _source, _pageNumber); }
+        finally { _loading = false; }
+    }
+
+    private async Task NextPage()
+    {
+        if (_page is null || _page.Page >= TotalPages) return;
+        _pageNumber++;
+        await Refresh();
+    }
+
+    private async Task PrevPage()
+    {
+        if (_pageNumber <= 1) return;
+        _pageNumber--;
+        await Refresh();
+    }
+
+    private async Task Resend(int id)
+    {
+        _resending.Add(id);
+        _message = null;
+        try
+        {
+            var result = await Api.ResendAsync(id);
+            _messageOk = string.Equals(result.Status, "Sent", StringComparison.OrdinalIgnoreCase);
+            _message = _messageOk
+                ? $"Resent as attempt #{result.SubmissionId} ({result.TaskIds.Count} task(s))."
+                : $"Resend failed: {result.Response ?? result.Status}";
+            await Refresh();
+        }
+        catch (Exception ex)
+        {
+            _messageOk = false;
+            _message = ex.Message;
+        }
+        finally
+        {
+            _resending.Remove(id);
+        }
+    }
+}

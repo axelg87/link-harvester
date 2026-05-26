@@ -20,84 +20,50 @@
     }
     else
     {
-        @foreach (var card in _cards)
+        <div class="lh-grid">
+            @foreach (var card in _cards)
+            {
+                <MediaTile
+                    Title="@card.DisplayTitle"
+                    Poster="@card.Poster"
+                    Category="@FormatKind(card)"
+                    Year="@card.Year"
+                    Rating="@card.Rating"
+                    Genres="@(card.Genres ?? new())"
+                    MetadataUncertain="@card.MetadataUncertain"
+                    SourceLabel="ZT"
+                    OnOpen="@(() => OpenCatalogTitle(card))" />
+            }
+        </div>
+        @foreach (var msg in _messages.Values)
         {
-            <article class="lh-card @(card.BetterAvailable ? "lh-card-upgrade" : "")">
-                <header class="lh-card-head">
-                    <div class="lh-card-title">
-                        @card.DisplayTitle
-                        @if (card.Year is int y) { <span class="lh-year">(@y)</span> }
-                    </div>
-                    <span class="lh-tag lh-tag-kind">@FormatKind(card)</span>
-                </header>
-
-                @if (card.BetterAvailable)
-                {
-                    <div class="lh-banner">⭐ Better quality available — upgrade?</div>
-                }
-
-                <div class="lh-card-quality">
-                    <span class="lh-tag lh-tag-quality">@card.Chosen.QualityLabel</span>
-                    @if (!string.IsNullOrEmpty(card.Chosen.Language))
-                    {
-                        <span class="lh-tag">@card.Chosen.Language</span>
-                    }
-                    @if (card.Chosen.SizeBytes is long sz)
-                    {
-                        <span class="lh-meta">@FormatSize(sz)</span>
-                    }
-                    @if (card.Chosen.EpisodeCount is int ec)
-                    {
-                        <span class="lh-meta">@ec ep.</span>
-                    }
-                </div>
-
-                <div class="lh-hosters">
-                    @foreach (var h in card.Chosen.Hosters)
-                    {
-                        <span class="lh-pill">@h.Hoster<span class="lh-pill-count">@h.LinkCount</span></span>
-                    }
-                </div>
-
-                @if (card.OtherVariants.Count > 0)
-                {
-                    <details class="lh-variants">
-                        <summary>@card.OtherVariants.Count other variant@(card.OtherVariants.Count == 1 ? "" : "s")</summary>
-                        @foreach (var v in card.OtherVariants)
-                        {
-                            <div class="lh-variant">
-                                <span class="lh-tag lh-tag-quality">@v.QualityLabel</span>
-                                @if (!string.IsNullOrEmpty(v.Language)) { <span class="lh-tag">@v.Language</span> }
-                                <button class="lh-link" @onclick="() => Send(v.Id)">Send this</button>
-                                <button class="lh-link" @onclick="() => Skip(v.Id)">Skip</button>
-                            </div>
-                        }
-                    </details>
-                }
-
-                <footer class="lh-card-actions">
-                    <button class="lh-secondary" @onclick="() => Skip(card.Chosen.Id)" disabled="@_busyIds.Contains(card.Chosen.Id)">
-                        Skip
-                    </button>
-                    <button class="lh-primary" @onclick="() => Send(card.Chosen.Id)" disabled="@_busyIds.Contains(card.Chosen.Id)">
-                        @(_busyIds.Contains(card.Chosen.Id) ? "Sending…" : "Send to NAS")
-                    </button>
-                </footer>
-
-                @if (_messages.TryGetValue(card.Chosen.Id, out var msg))
-                {
-                    <p class="lh-action-msg">@msg</p>
-                }
-            </article>
+            <p class="lh-action-msg">@msg</p>
         }
     }
 </div>
 
+@if (_selectedTitle is not null)
+{
+    <TitleDetailModal
+        Title="_selectedTitle"
+        SelectedLinkIds="_selectedLinkIds"
+        Sending="_sending"
+        SendOk="_sendOk"
+        SendMessage="_sendMessage"
+        OnClose="CloseTitle"
+        OnToggleLink="@(args => ToggleLink(args.LinkId, args.On))"
+        OnSend="SendSelected" />
+}
+
 @code {
     private List<InboxCard> _cards = new();
     private bool _loading = true;
-    private readonly HashSet<int> _busyIds = new();
     private readonly Dictionary<int, string> _messages = new();
+    private TitleDetail? _selectedTitle;
+    private HashSet<int> _selectedLinkIds = new();
+    private bool _sending;
+    private bool _sendOk;
+    private string? _sendMessage;
 
     protected override async Task OnInitializedAsync() => await Refresh();
 
@@ -116,52 +82,6 @@
         _messages[-1] = "Scan requested. Refresh in a few seconds.";
     }
 
-    private async Task Send(int articleId)
-    {
-        _busyIds.Add(articleId);
-        _messages.Remove(articleId);
-        StateHasChanged();
-        try
-        {
-            var res = await Api.SendArticleAsync(articleId);
-            // The submission is persisted regardless of DSM outcome. On
-            // failure, ResponseMessage holds the friendly DsmException.HumanMessage
-            // (see SubmissionService); surface it directly instead of the
-            // raw exception message we'd previously fall through to.
-            if (string.Equals(res.Status, "Failed", StringComparison.OrdinalIgnoreCase))
-            {
-                _messages[articleId] = string.IsNullOrEmpty(res.Response)
-                    ? "Send failed (no detail)."
-                    : res.Response;
-            }
-            else
-            {
-                _messages[articleId] = $"Sent ({res.Status}, {res.TaskIds.Count} task{(res.TaskIds.Count == 1 ? "" : "s")} created).";
-            }
-            await Refresh();
-        }
-        catch (Exception ex)
-        {
-            _messages[articleId] = "Failed: " + ex.Message;
-        }
-        finally
-        {
-            _busyIds.Remove(articleId);
-        }
-    }
-
-    private async Task Skip(int articleId)
-    {
-        _busyIds.Add(articleId);
-        StateHasChanged();
-        try
-        {
-            await Api.SkipArticleAsync(articleId);
-            await Refresh();
-        }
-        finally { _busyIds.Remove(articleId); }
-    }
-
     private static string FormatKind(InboxCard c) => c.Kind switch
     {
         "Season" when c.SeasonNumber is int n => $"Saison {n}",
@@ -170,5 +90,66 @@
         _ => c.Kind
     };
 
-    private static string FormatSize(long bytes) => FormatHelpers.FormatSize(bytes);
+    private async Task OpenCatalogTitle(InboxCard card)
+    {
+        if (card.CatalogTitleId is not int catalogTitleId)
+        {
+            _messages[card.TitleId] = "This item is still being prepared for the catalog.";
+            return;
+        }
+
+        try
+        {
+            var title = await Api.GetTitleAsync(catalogTitleId);
+            if (title is null) return;
+            _selectedTitle = title;
+            _selectedLinkIds = new HashSet<int>();
+            var best = (title.Links ?? new())
+                .Concat((title.Episodes ?? new()).SelectMany(e => e.Links ?? new()))
+                .OrderBy(l => HostRank(l.Host))
+                .ThenByDescending(l => l.SizeBytes ?? 0)
+                .FirstOrDefault();
+            if (best is not null) _selectedLinkIds.Add(best.Id);
+        }
+        catch (Exception ex)
+        {
+            _messages[card.TitleId] = "Could not open item: " + ex.Message;
+        }
+    }
+
+    private void CloseTitle() => _selectedTitle = null;
+
+    private void ToggleLink(int id, bool on)
+    {
+        if (on) _selectedLinkIds.Add(id); else _selectedLinkIds.Remove(id);
+    }
+
+    private async Task SendSelected()
+    {
+        if (_selectedLinkIds.Count == 0) return;
+        _sending = true;
+        _sendMessage = null;
+        try
+        {
+            var res = await Api.SendCatalogLinksAsync(_selectedLinkIds);
+            _sendOk = res.Ok;
+            _sendMessage = res.Ok
+                ? $"Sent {res.Submitted} link(s) to DSM ({res.TaskIds.Count} task(s) created)."
+                : (res.Error ?? "Send failed.");
+            await Refresh();
+        }
+        catch (Exception ex) { _sendOk = false; _sendMessage = ex.Message; }
+        finally { _sending = false; }
+    }
+
+    private static int HostRank(string? host)
+    {
+        if (string.IsNullOrWhiteSpace(host)) return 9;
+        var h = host.ToLowerInvariant();
+        if (h.Contains("1fichier")) return 0;
+        if (h.Contains("rapidgator")) return 1;
+        if (h.Contains("uploady")) return 2;
+        if (h.Contains("nitroflare")) return 3;
+        return 9;
+    }
 }
