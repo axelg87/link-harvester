@@ -43,7 +43,11 @@
                                 <input type="checkbox" checked="@SelectedLinkIds.Contains(l.Id)"
                                        @onchange="@(e => InvokeToggle(l.Id, e.Value is bool b && b))" />
                                 <span class="lh-link-host">@l.Host</span>
-                                @if (string.Equals(l.Source, "zt", StringComparison.OrdinalIgnoreCase)) { <span class="lh-tag">ZT</span> }
+                                @if (IsZt(l))
+                                {
+                                    <span class="lh-tag">ZT</span>
+                                    <span class="lh-muted">resolves one hoster using your priority</span>
+                                }
                                 @if (!string.IsNullOrEmpty(l.Quality)) { <span class="lh-tag lh-tag-quality">@l.Quality</span> }
                                 @if (l.SizeBytes.HasValue) { <span class="lh-muted">@FormatHelpers.FormatSize(l.SizeBytes.Value)</span> }
                                 @if (!string.IsNullOrEmpty(l.AudioLangs)) { <span class="lh-muted">@l.AudioLangs</span> }
@@ -66,7 +70,11 @@
                                 <input type="checkbox" checked="@SelectedLinkIds.Contains(l.Id)"
                                        @onchange="@(e => InvokeToggle(l.Id, e.Value is bool b && b))" />
                                 <span class="lh-link-host">@l.Host</span>
-                                @if (string.Equals(l.Source, "zt", StringComparison.OrdinalIgnoreCase)) { <span class="lh-tag">ZT</span> }
+                                @if (IsZt(l))
+                                {
+                                    <span class="lh-tag">ZT</span>
+                                    <span class="lh-muted">resolves one hoster using your priority</span>
+                                }
                                 @if (!string.IsNullOrEmpty(l.Quality)) { <span class="lh-tag lh-tag-quality">@l.Quality</span> }
                                 @if (l.SizeBytes.HasValue) { <span class="lh-muted">@FormatHelpers.FormatSize(l.SizeBytes.Value)</span> }
                             </label>
@@ -100,6 +108,9 @@
     [Parameter] public EventCallback OnSend { get; set; }
 
     private Task InvokeToggle(int linkId, bool on) => OnToggleLink.InvokeAsync((linkId, on));
+
+    private static bool IsZt(CatalogLink link) =>
+        string.Equals(link.Source, "zt", StringComparison.OrdinalIgnoreCase);
 
     private static string FormatEpisodeHeader(CatalogEpisode ep)
     {

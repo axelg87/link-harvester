@@ -1,4 +1,3 @@
-using System.Text.Json;
 using LinkHarvester.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -7,6 +6,7 @@ namespace LinkHarvester.Persistence.Catalog;
 
 public sealed class HarvesterCatalogPromoter
 {
+    private const int BackfillBatchSize = 100;
     private readonly IDbContextFactory<HarvesterDbContext> _factory;
     private readonly ILogger<HarvesterCatalogPromoter> _log;
 
@@ -97,7 +97,7 @@ public sealed class HarvesterCatalogPromoter
         link.LinkSource = "zt";
         link.HarvesterArticleId = article.Id;
         link.LinkUrl = article.Url;
-        link.HostName = SummarizeHosters(article.HostersJson);
+        link.HostName = "ZT - best configured hoster";
         link.NormalizedHost = "zt";
         link.QualityName = article.QualityLabel;
         link.AudioLangs = article.Language;
@@ -132,6 +132,44 @@ public sealed class HarvesterCatalogPromoter
         return catalogTitle.Id;
     }
 
+    public async Task<int> BackfillUnpromotedAsync(CancellationToken ct)
+    {
+        var total = 0;
+        while (true)
+        {
+            List<int> articleIds;
+            await using (var db = await _factory.CreateDbContextAsync(ct))
+            {
+                articleIds = await db.Articles
+                    .AsNoTracking()
+                    .Where(a => a.Title.CatalogTitleId == null
+                        && (a.Status == ArticleStatus.Parsed
+                            || a.Status == ArticleStatus.Resolved
+                            || a.Status == ArticleStatus.InInbox
+                            || a.Status == ArticleStatus.Submitted))
+                    .OrderByDescending(a => a.DiscoveredAt)
+                    .Select(a => a.Id)
+                    .Take(BackfillBatchSize)
+                    .ToListAsync(ct);
+            }
+
+            if (articleIds.Count == 0) return total;
+            foreach (var articleId in articleIds)
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    await PromoteArticleAsync(articleId, ct);
+                    total++;
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Could not backfill article {ArticleId} into catalog.", articleId);
+                }
+            }
+        }
+    }
+
     private static string MapCategory(TitleKind kind) => kind switch
     {
         TitleKind.Movie => "Films",
@@ -140,16 +178,4 @@ public sealed class HarvesterCatalogPromoter
         _ => "Other"
     };
 
-    private static string SummarizeHosters(string json)
-    {
-        try
-        {
-            var hosters = JsonSerializer.Deserialize<List<HosterLinks>>(json) ?? new();
-            return hosters.Count == 0 ? "ZT" : string.Join(", ", hosters.Select(h => h.Hoster).Take(3));
-        }
-        catch
-        {
-            return "ZT";
-        }
-    }
 }

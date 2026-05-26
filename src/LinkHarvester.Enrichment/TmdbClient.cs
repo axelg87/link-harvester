@@ -115,6 +115,9 @@ public sealed class TmdbClient
                 OriginalLanguage = root.TryGetProperty("original_language", out var ol) ? ol.GetString() : null,
                 Overview = root.TryGetProperty("overview", out var ov) ? ov.GetString() : null,
                 Status = root.TryGetProperty("status", out var st) ? st.GetString() : null,
+                PosterUrl = root.TryGetProperty("poster_path", out var poster) && poster.ValueKind == JsonValueKind.String
+                    ? BuildPosterUrl(poster.GetString())
+                    : null,
             };
             if (root.TryGetProperty("genres", out var g) && g.ValueKind == JsonValueKind.Array)
             {
@@ -160,6 +163,9 @@ public sealed class TmdbClient
 
     private static string Normalize(string value)
         => new(value.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
+
+    private static string? BuildPosterUrl(string? path)
+        => string.IsNullOrWhiteSpace(path) ? null : $"https://image.tmdb.org/t/p/w500{path}";
 }
 
 public sealed class TmdbDetails
@@ -175,6 +181,7 @@ public sealed class TmdbDetails
     public string? OriginalLanguage { get; set; }
     public string? Overview { get; set; }
     public string? Status { get; set; }
+    public string? PosterUrl { get; set; }
     public List<string> Genres { get; set; } = new();
 }
 

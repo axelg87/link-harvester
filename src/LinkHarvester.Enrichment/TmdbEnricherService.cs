@@ -386,6 +386,7 @@ public sealed class TmdbEnricherService : BackgroundService
         }
 
         await using var db = await _factory.CreateDbContextAsync(ct);
+        var title = await db.CatalogTitles.FirstOrDefaultAsync(t => t.Id == item.TitleId, ct);
         var meta = await db.CatalogTitleMetadata.FirstOrDefaultAsync(m => m.TitleId == item.TitleId, ct)
             ?? new CatalogTitleMetadataEntity { TitleId = item.TitleId };
 
@@ -409,6 +410,12 @@ public sealed class TmdbEnricherService : BackgroundService
 
         if (meta.Id == 0)
             db.CatalogTitleMetadata.Add(meta);
+        if (title is not null && !string.IsNullOrWhiteSpace(details.PosterUrl))
+        {
+            title.TitlePoster = details.PosterUrl;
+            title.TmdbId ??= details.TmdbId;
+            title.ImdbId ??= details.ImdbId;
+        }
         await db.SaveChangesAsync(ct);
         _tracker.IncrementEnriched();
     }
