@@ -9,20 +9,15 @@
         <h1>Send history</h1>
     </header>
 
-    <div class="lh-toolbar">
-        <select @bind="_status" @bind:after="Refresh">
-            <option value="">All statuses</option>
-            <option value="Sent">Sent</option>
-            <option value="Failed">Failed</option>
-            <option value="ResolutionFailed">Resolution failed</option>
-            <option value="Pending">Pending</option>
-        </select>
-        <select @bind="_source" @bind:after="Refresh">
-            <option value="">All sources</option>
-            <option value="ZtArticle">ZT</option>
-            <option value="Catalog">Catalog</option>
-        </select>
-        <button class="lh-secondary" @onclick="Refresh">Refresh</button>
+    <div class="lh-history-filters">
+        @foreach (var status in _statusFilters)
+        {
+            <button class="@FilterClass(_status, status.Value)" @onclick="() => SetStatus(status.Value)">@status.Label</button>
+        }
+        @foreach (var source in _sourceFilters)
+        {
+            <button class="@FilterClass(_source, source.Value)" @onclick="() => SetSource(source.Value)">@source.Label</button>
+        }
     </div>
 
     @if (_loading)
@@ -35,23 +30,27 @@
     }
     else
     {
-        <div class="lh-link-list">
+        <div class="lh-history-list">
             @foreach (var item in _page.Items)
             {
-                <div class="lh-link-row">
-                    <span class="lh-tag">@item.Source</span>
-                    <span class="@(item.Status == "Sent" ? "lh-test-ok" : "lh-test-err")">@item.Status</span>
-                    <strong>@item.DisplayTitle</strong>
-                    <span class="lh-muted">@item.UrlCount link@(item.UrlCount == 1 ? "" : "s")</span>
-                    <span class="lh-muted">@item.SubmittedAt.ToLocalTime().ToString("g")</span>
+                <article class="lh-history-card">
+                    <div class="lh-history-main">
+                        <div class="lh-history-title">@item.DisplayTitle</div>
+                        <div class="lh-history-meta">
+                            <span class="lh-tag">@SourceLabel(item.Source)</span>
+                            <span class="@StatusClass(item.Status)">@item.Status</span>
+                            <span>@item.UrlCount link@(item.UrlCount == 1 ? "" : "s")</span>
+                            <span>@item.SubmittedAt.ToLocalTime().ToString("dd/MM HH:mm")</span>
+                        </div>
+                    </div>
                     @if (!string.IsNullOrEmpty(item.ResponseMessage))
                     {
-                        <span class="lh-error">@item.ResponseMessage</span>
+                        <div class="lh-history-error">@item.ResponseMessage</div>
                     }
                     <button class="lh-secondary" @onclick="() => Resend(item.Id)" disabled="@_resending.Contains(item.Id)">
                         @(_resending.Contains(item.Id) ? "Resending…" : "Resend")
                     </button>
-                </div>
+                </article>
             }
         </div>
         <div class="lh-pager">
@@ -76,6 +75,20 @@
     private readonly HashSet<int> _resending = new();
     private string? _message;
     private bool _messageOk;
+    private readonly (string Label, string? Value)[] _statusFilters =
+    [
+        ("All", null),
+        ("Sent", "Sent"),
+        ("Failed", "Failed"),
+        ("Resolution failed", "ResolutionFailed"),
+        ("Pending", "Pending")
+    ];
+    private readonly (string Label, string? Value)[] _sourceFilters =
+    [
+        ("All sources", null),
+        ("ZT", "ZtArticle"),
+        ("Catalog", "Catalog")
+    ];
 
     private int TotalPages => _page is null || _page.PageSize == 0 ? 1 : Math.Max(1, (int)Math.Ceiling(_page.Total / (double)_page.PageSize));
 
@@ -86,6 +99,20 @@
         _loading = true;
         try { _page = await Api.GetSendHistoryAsync(_status, _source, _pageNumber); }
         finally { _loading = false; }
+    }
+
+    private async Task SetStatus(string? status)
+    {
+        _status = status;
+        _pageNumber = 1;
+        await Refresh();
+    }
+
+    private async Task SetSource(string? source)
+    {
+        _source = source;
+        _pageNumber = 1;
+        await Refresh();
     }
 
     private async Task NextPage()
@@ -125,4 +152,13 @@
             _resending.Remove(id);
         }
     }
+
+    private static string FilterClass(string? current, string? value) =>
+        string.Equals(current ?? "", value ?? "", StringComparison.Ordinal) ? "lh-chip lh-chip-on" : "lh-chip";
+
+    private static string SourceLabel(string source) =>
+        string.Equals(source, "ZtArticle", StringComparison.OrdinalIgnoreCase) ? "ZT" : source;
+
+    private static string StatusClass(string status) =>
+        string.Equals(status, "Sent", StringComparison.OrdinalIgnoreCase) ? "lh-test-ok" : "lh-test-err";
 }

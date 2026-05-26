@@ -21,6 +21,7 @@
         <div class="lh-tile-title">@Title</div>
         <div class="lh-tile-meta">
             @if (Year.HasValue) { <span>@Year</span> }
+            @if (SeenAt.HasValue) { <span>@SeenAt.Value.ToLocalTime().ToString("dd/MM HH:mm")</span> }
             <span class="lh-tag">@Category</span>
             @if (!string.IsNullOrEmpty(SourceLabel)) { <span class="lh-tag">@SourceLabel</span> }
         </div>
@@ -36,6 +37,7 @@
     [Parameter] public string? Poster { get; set; }
     [Parameter] public string Category { get; set; } = "";
     [Parameter] public int? Year { get; set; }
+    [Parameter] public DateTimeOffset? SeenAt { get; set; }
     [Parameter] public double? Rating { get; set; }
     [Parameter] public List<string> Genres { get; set; } = new();
     [Parameter] public bool MetadataUncertain { get; set; }

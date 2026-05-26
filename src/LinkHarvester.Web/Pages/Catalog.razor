@@ -76,6 +76,7 @@
                             Poster="@hit.Poster"
                             Category="@hit.Category"
                             Year="@hit.Year"
+                            SeenAt="@hit.LastSeenAt"
                             Rating="@hit.Rating"
                             Genres="@(hit.Genres ?? new())"
                             MetadataUncertain="@hit.MetadataUncertain"
@@ -131,14 +132,20 @@
 
     protected override async Task OnInitializedAsync()
     {
+        await DoSearch();
+        _ = LoadCatalogChrome();
+    }
+
+    private async Task LoadCatalogChrome()
+    {
         try
         {
             _stats = await Api.GetCatalogStatsAsync();
             _facets = await Api.GetCatalogFacetsAsync();
             _genres = await Api.GetCatalogGenresAsync();
+            await InvokeAsync(StateHasChanged);
         }
         catch { /* unauthenticated -> redirect handled by layout */ }
-        await DoSearch();
     }
 
     private async Task DoSearch()

@@ -99,7 +99,7 @@ public static class CatalogEndpoints
                 .Select(t => new
                 {
                     t.Id, t.TitleName, t.OriginalTitle, t.CategoryName, t.TitlePoster,
-                    t.LinkCount, t.EpisodeCount,
+                    t.LinkCount, t.EpisodeCount, t.LastSeenAt,
                     Meta = t.Metadata
                 });
 
@@ -139,6 +139,7 @@ public static class CatalogEndpoints
                 Poster: x.TitlePoster,
                 LinkCount: x.LinkCount,
                 EpisodeCount: x.EpisodeCount,
+                LastSeenAt: x.LastSeenAt,
                 Year: x.Meta?.Year,
                 Rating: x.Meta?.VoteAverage,
                 Runtime: x.Meta?.Runtime,
@@ -294,6 +295,8 @@ public static class CatalogEndpoints
 
             var ztLinks = links
                 .Where(l => string.Equals(l.LinkSource, "zt", StringComparison.OrdinalIgnoreCase) && l.HarvesterArticleId.HasValue)
+                .GroupBy(l => l.HarvesterArticleId!.Value)
+                .Select(g => g.First())
                 .ToList();
             if (ztLinks.Count > 0)
             {
@@ -457,7 +460,7 @@ public static class CatalogEndpoints
 
     public sealed record SearchHitDto(
         int Id, string Title, string? OriginalTitle, string Category, string? Poster,
-        int LinkCount, int EpisodeCount,
+        int LinkCount, int EpisodeCount, DateTimeOffset LastSeenAt,
         int? Year, double? Rating, int? Runtime, string? Overview,
         List<string> Genres, string? OriginalLanguage, string? EnrichmentSource, bool MetadataUncertain);
 

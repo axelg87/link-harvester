@@ -98,7 +98,7 @@ public sealed record CatalogFacets(List<FacetEntry> Categories, List<FacetEntry>
 
 public sealed record SearchHit(
     int Id, string Title, string? OriginalTitle, string Category, string? Poster,
-    int LinkCount, int EpisodeCount, int? Year, double? Rating, int? Runtime,
+    int LinkCount, int EpisodeCount, DateTimeOffset LastSeenAt, int? Year, double? Rating, int? Runtime,
     string? Overview, List<string> Genres, string? OriginalLanguage, string? EnrichmentSource,
     bool MetadataUncertain);
 
