@@ -99,7 +99,7 @@ public static class CatalogEndpoints
                 .Select(t => new
                 {
                     t.Id, t.TitleName, t.OriginalTitle, t.CategoryName, t.TitlePoster,
-                    t.LinkCount, t.EpisodeCount, t.LastSeenAt,
+                    t.LinkCount, t.EpisodeCount,
                     Meta = t.Metadata
                 });
 
@@ -139,7 +139,6 @@ public static class CatalogEndpoints
                 Poster: x.TitlePoster,
                 LinkCount: x.LinkCount,
                 EpisodeCount: x.EpisodeCount,
-                LastSeenAt: x.LastSeenAt,
                 Year: x.Meta?.Year,
                 Rating: x.Meta?.VoteAverage,
                 Runtime: x.Meta?.Runtime,
@@ -460,7 +459,7 @@ public static class CatalogEndpoints
 
     public sealed record SearchHitDto(
         int Id, string Title, string? OriginalTitle, string Category, string? Poster,
-        int LinkCount, int EpisodeCount, DateTimeOffset LastSeenAt,
+        int LinkCount, int EpisodeCount,
         int? Year, double? Rating, int? Runtime, string? Overview,
         List<string> Genres, string? OriginalLanguage, string? EnrichmentSource, bool MetadataUncertain);
 
