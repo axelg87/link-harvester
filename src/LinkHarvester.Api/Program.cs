@@ -114,6 +114,13 @@ using (var scope = app.Services.CreateScope())
     // share one source of truth.
     var startupLog = scope.ServiceProvider.GetRequiredService<ILoggerFactory>()
         .CreateLogger("Startup");
+    var promoter = scope.ServiceProvider.GetRequiredService<HarvesterCatalogPromoter>();
+    var promotedCount = await promoter.BackfillUnpromotedAsync(CancellationToken.None);
+    if (promotedCount > 0)
+    {
+        startupLog.LogInformation("promoted {Count} existing ZT article(s) into catalog", promotedCount);
+    }
+
     var resetCount = await EnrichmentMaintenance.ResetTransientFailedAsync(db, CancellationToken.None);
     if (resetCount > 0)
     {

@@ -25,6 +25,7 @@ async function onInstall(event) {
         .filter(asset => !offlineAssetsExclude.some(pattern => pattern.test(asset.url)))
         .map(asset => new Request(asset.url, { integrity: asset.hash, cache: 'no-cache' }));
     await caches.open(cacheName).then(cache => cache.addAll(assetsRequests));
+    await self.skipWaiting();
 }
 
 async function onActivate(event) {
@@ -35,20 +36,27 @@ async function onActivate(event) {
     await Promise.all(cacheKeys
         .filter(key => key.startsWith(cacheNamePrefix) && key !== cacheName)
         .map(key => caches.delete(key)));
+    await self.clients.claim();
 }
 
 async function onFetch(event) {
+    // This app is a frequently-deployed private dashboard, not an offline-first
+    // PWA. Always let navigation requests hit the network first so a deployment
+    // can swap in the new WASM bundle immediately instead of showing stale UI
+    // from an old cached index.html.
+    if (event.request.mode === 'navigate') {
+        try {
+            return await fetch(event.request);
+        } catch {
+            const cache = await caches.open(cacheName);
+            return await cache.match('index.html');
+        }
+    }
+
     let cachedResponse = null;
     if (event.request.method === 'GET') {
-        // For all navigation requests, try to serve index.html from cache,
-        // unless that request is for an offline resource.
-        // If you need some URLs to be server-rendered, edit the following check to exclude those URLs
-        const shouldServeIndexHtml = event.request.mode === 'navigate'
-            && !manifestUrlList.some(url => url === event.request.url);
-
-        const request = shouldServeIndexHtml ? 'index.html' : event.request;
         const cache = await caches.open(cacheName);
-        cachedResponse = await cache.match(request);
+        cachedResponse = await cache.match(event.request);
     }
 
     return cachedResponse || fetch(event.request);

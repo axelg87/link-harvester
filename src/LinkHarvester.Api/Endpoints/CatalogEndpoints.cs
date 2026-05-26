@@ -157,10 +157,25 @@ public static class CatalogEndpoints
         {
             var t = await db.CatalogTitles.AsNoTracking()
                 .Include(x => x.Metadata)
-                .Include(x => x.Episodes)
-                .Include(x => x.Links)
                 .FirstOrDefaultAsync(x => x.Id == id, ct);
             if (t is null) return Results.NotFound();
+
+            var episodes = await db.CatalogEpisodes.AsNoTracking()
+                .Where(e => e.TitleId == id)
+                .OrderBy(e => e.IsFullSeason ? 0 : 1)
+                .ThenBy(e => e.SeasonNumber)
+                .ThenBy(e => e.EpisodeNumber)
+                .ToListAsync(ct);
+            var links = await db.CatalogLinks.AsNoTracking()
+                .Where(l => l.TitleId == id)
+                .OrderBy(l => l.EpisodeId == null ? 0 : 1)
+                .ThenBy(l => l.EpisodeId)
+                .ThenBy(l => l.HostName)
+                .ToListAsync(ct);
+            var linksByEpisode = links
+                .Where(l => l.EpisodeId.HasValue)
+                .GroupBy(l => l.EpisodeId!.Value)
+                .ToDictionary(g => g.Key, g => g.Select(MapLink).ToList());
 
             var dto = new TitleDetailDto(
                 Id: t.Id,
@@ -177,13 +192,16 @@ public static class CatalogEndpoints
                 ImdbId: t.ImdbId,
                 TmdbId: t.TmdbId,
                 MetadataUncertain: t.Metadata?.MetadataUncertain == true,
-                Links: t.Links.Where(l => l.EpisodeId == null).Select(MapLink).ToList(),
-                Episodes: t.Episodes.OrderBy(e => e.IsFullSeason ? 0 : 1)
-                                     .ThenBy(e => e.SeasonNumber).ThenBy(e => e.EpisodeNumber)
-                                     .Select(e => new EpisodeDto(
-                                        e.Id, e.SeasonNumber, e.EpisodeNumber, e.EpisodeName, e.IsFullSeason,
-                                        t.Links.Where(l => l.EpisodeId == e.Id).Select(MapLink).ToList()))
-                                     .ToList());
+                Links: links.Where(l => l.EpisodeId == null).Select(MapLink).ToList(),
+                Episodes: episodes
+                    .Select(e => new EpisodeDto(
+                        e.Id,
+                        e.SeasonNumber,
+                        e.EpisodeNumber,
+                        e.EpisodeName,
+                        e.IsFullSeason,
+                        linksByEpisode.TryGetValue(e.Id, out var episodeLinks) ? episodeLinks : new()))
+                    .ToList());
             return Results.Ok(dto);
         });
 

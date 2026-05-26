@@ -434,10 +434,9 @@ input[type=checkbox] {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    max-height: calc(100vh - 130px);
-    overflow-y: auto;
-    position: sticky;
-    top: 80px;
+    max-height: none;
+    overflow: visible;
+    position: static;
 }
 .lh-search input {
     width: 100%;
