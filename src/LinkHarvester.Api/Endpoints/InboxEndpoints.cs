@@ -55,7 +55,9 @@ public static class InboxEndpoints
                     CatalogTitleId: t.CatalogTitleId,
                     DisplayTitle: t.DisplayTitle,
                     Poster: t.CatalogTitleId is int cid && catalogById.TryGetValue(cid, out var catalog) ? catalog.TitlePoster : null,
-                    Year: t.Year,
+                    Year: t.CatalogTitleId is int cidYear && catalogById.TryGetValue(cidYear, out var catalogYear)
+                        ? catalogYear.Metadata?.Year ?? t.Year
+                        : t.Year,
                     Rating: t.CatalogTitleId is int cid2 && catalogById.TryGetValue(cid2, out var catalog2) ? catalog2.Metadata?.VoteAverage : null,
                     Genres: t.CatalogTitleId is int cid3 && catalogById.TryGetValue(cid3, out var catalog3) ? SafeGenres(catalog3.Metadata?.GenresJson) : new(),
                     MetadataUncertain: t.CatalogTitleId is int cid4 && catalogById.TryGetValue(cid4, out var catalog4) && catalog4.Metadata?.MetadataUncertain == true,

@@ -294,6 +294,8 @@ public static class CatalogEndpoints
 
             var ztLinks = links
                 .Where(l => string.Equals(l.LinkSource, "zt", StringComparison.OrdinalIgnoreCase) && l.HarvesterArticleId.HasValue)
+                .GroupBy(l => l.HarvesterArticleId!.Value)
+                .Select(g => g.First())
                 .ToList();
             if (ztLinks.Count > 0)
             {

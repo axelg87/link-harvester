@@ -590,6 +590,58 @@ input[type=checkbox] {
     margin: 16px 0 24px;
 }
 
+/* ── Send history ───────────────────────────────────────────────── */
+.lh-history-filters {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+}
+.lh-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.lh-history-card {
+    background: var(--lh-surface);
+    border: 1px solid var(--lh-border);
+    border-radius: 14px;
+    padding: 12px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+}
+.lh-history-main { min-width: 0; }
+.lh-history-title {
+    font-weight: 700;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+.lh-history-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    color: var(--lh-text-muted);
+    font-size: 0.82rem;
+    margin-top: 6px;
+}
+.lh-history-error {
+    grid-column: 1 / -1;
+    color: #fca5a5;
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+    .lh-history-card {
+        grid-template-columns: 1fr;
+    }
+    .lh-history-card .lh-secondary {
+        width: 100%;
+    }
+}
+
 /* ── Title detail modal ─────────────────────────────────────────── */
 .lh-modal {
     position: fixed; inset: 0;

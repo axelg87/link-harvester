@@ -1,3 +1,4 @@
+using System.Text.Json;
 using LinkHarvester.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -6,7 +7,6 @@ namespace LinkHarvester.Persistence.Catalog;
 
 public sealed class HarvesterCatalogPromoter
 {
-    private const int BackfillBatchSize = 100;
     private readonly IDbContextFactory<HarvesterDbContext> _factory;
     private readonly ILogger<HarvesterCatalogPromoter> _log;
 
@@ -53,55 +53,59 @@ public sealed class HarvesterCatalogPromoter
 
         await db.SaveChangesAsync(ct);
 
-        int? episodeId = null;
-        if (title.Kind is TitleKind.Season or TitleKind.Anime)
+        var existingLinks = await db.CatalogLinks
+            .Where(l => l.HarvesterArticleId == article.Id)
+            .ToListAsync(ct);
+        if (existingLinks.Count > 0)
         {
-            var season = title.SeasonNumber ?? 0;
-            var episode = await db.CatalogEpisodes.FirstOrDefaultAsync(e =>
-                e.TitleId == catalogTitle.Id
-                && e.SeasonNumber == season
-                && e.EpisodeNumber == 0
-                && e.IsFullSeason, ct);
-            if (episode is null)
+            db.CatalogLinks.RemoveRange(existingLinks);
+            await db.SaveChangesAsync(ct);
+        }
+
+        var hosters = ParseHosters(article.HostersJson);
+        var linkOrdinal = 0;
+        foreach (var hoster in hosters)
+        {
+            foreach (var protectedLink in hoster.Links)
             {
-                episode = new CatalogEpisodeEntity
+                linkOrdinal++;
+                var episodeId = await ResolveEpisodeIdAsync(db, catalogTitle.Id, title, protectedLink.EpisodeIndex, ct);
+                db.CatalogLinks.Add(new CatalogLinkEntity
                 {
                     TitleId = catalogTitle.Id,
-                    SeasonNumber = season,
-                    EpisodeNumber = 0,
-                    IsFullSeason = true,
-                    EpisodeName = season > 0 ? $"Season {season}" : "Season"
-                };
-                db.CatalogEpisodes.Add(episode);
-                await db.SaveChangesAsync(ct);
+                    EpisodeId = episodeId,
+                    ExternalLinkId = BuildExternalLinkId(article.Id, linkOrdinal),
+                    LinkSource = "zt",
+                    HarvesterArticleId = article.Id,
+                    LinkUrl = protectedLink.Url,
+                    HostName = hoster.Hoster,
+                    NormalizedHost = hoster.Hoster.ToLowerInvariant(),
+                    QualityName = article.QualityLabel,
+                    AudioLangs = article.Language,
+                    SizeBytes = article.SizeBytes,
+                    CreatedAt = article.DiscoveredAt
+                });
             }
-            episodeId = episode.Id;
         }
 
-        var externalLinkId = -article.Id;
-        var link = await db.CatalogLinks.FirstOrDefaultAsync(l => l.ExternalLinkId == externalLinkId, ct);
-        if (link is null)
+        if (linkOrdinal == 0)
         {
-            link = new CatalogLinkEntity
+            db.CatalogLinks.Add(new CatalogLinkEntity
             {
-                ExternalLinkId = externalLinkId,
-                CreatedAt = article.DiscoveredAt,
+                TitleId = catalogTitle.Id,
+                EpisodeId = await ResolveEpisodeIdAsync(db, catalogTitle.Id, title, null, ct),
+                ExternalLinkId = BuildExternalLinkId(article.Id, 1),
                 LinkSource = "zt",
-                HarvesterArticleId = article.Id
-            };
-            db.CatalogLinks.Add(link);
+                HarvesterArticleId = article.Id,
+                LinkUrl = article.Url,
+                HostName = "ZT",
+                NormalizedHost = "zt",
+                QualityName = article.QualityLabel,
+                AudioLangs = article.Language,
+                SizeBytes = article.SizeBytes,
+                CreatedAt = article.DiscoveredAt
+            });
         }
-
-        link.TitleId = catalogTitle.Id;
-        link.EpisodeId = episodeId;
-        link.LinkSource = "zt";
-        link.HarvesterArticleId = article.Id;
-        link.LinkUrl = article.Url;
-        link.HostName = "ZT - best configured hoster";
-        link.NormalizedHost = "zt";
-        link.QualityName = article.QualityLabel;
-        link.AudioLangs = article.Language;
-        link.SizeBytes = article.SizeBytes;
 
         var meta = await db.CatalogTitleMetadata.FirstOrDefaultAsync(m => m.TitleId == catalogTitle.Id, ct);
         if (meta is null)
@@ -135,39 +139,34 @@ public sealed class HarvesterCatalogPromoter
     public async Task<int> BackfillUnpromotedAsync(CancellationToken ct)
     {
         var total = 0;
-        while (true)
+        List<int> articleIds;
+        await using (var db = await _factory.CreateDbContextAsync(ct))
         {
-            List<int> articleIds;
-            await using (var db = await _factory.CreateDbContextAsync(ct))
-            {
-                articleIds = await db.Articles
-                    .AsNoTracking()
-                    .Where(a => a.Title.CatalogTitleId == null
-                        && (a.Status == ArticleStatus.Parsed
-                            || a.Status == ArticleStatus.Resolved
-                            || a.Status == ArticleStatus.InInbox
-                            || a.Status == ArticleStatus.Submitted))
-                    .OrderByDescending(a => a.DiscoveredAt)
-                    .Select(a => a.Id)
-                    .Take(BackfillBatchSize)
-                    .ToListAsync(ct);
-            }
+            articleIds = await db.Articles
+                .AsNoTracking()
+                .Where(a => a.Status == ArticleStatus.Parsed
+                    || a.Status == ArticleStatus.Resolved
+                    || a.Status == ArticleStatus.InInbox
+                    || a.Status == ArticleStatus.Submitted)
+                .OrderByDescending(a => a.DiscoveredAt)
+                .Select(a => a.Id)
+                .ToListAsync(ct);
+        }
 
-            if (articleIds.Count == 0) return total;
-            foreach (var articleId in articleIds)
+        foreach (var articleId in articleIds)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
             {
-                ct.ThrowIfCancellationRequested();
-                try
-                {
-                    await PromoteArticleAsync(articleId, ct);
-                    total++;
-                }
-                catch (Exception ex)
-                {
-                    _log.LogWarning(ex, "Could not backfill article {ArticleId} into catalog.", articleId);
-                }
+                await PromoteArticleAsync(articleId, ct);
+                total++;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Could not backfill article {ArticleId} into catalog.", articleId);
             }
         }
+        return total;
     }
 
     private static string MapCategory(TitleKind kind) => kind switch
@@ -177,5 +176,48 @@ public sealed class HarvesterCatalogPromoter
         TitleKind.Season => "Séries",
         _ => "Other"
     };
+
+    private static long BuildExternalLinkId(int articleId, int ordinal) =>
+        -(((long)articleId * 10_000L) + ordinal);
+
+    private static List<HosterLinks> ParseHosters(string json)
+    {
+        try { return JsonSerializer.Deserialize<List<HosterLinks>>(json) ?? new(); }
+        catch { return new(); }
+    }
+
+    private static async Task<int?> ResolveEpisodeIdAsync(
+        HarvesterDbContext db,
+        int catalogTitleId,
+        TitleEntity title,
+        int? episodeIndex,
+        CancellationToken ct)
+    {
+        if (title.Kind is not (TitleKind.Season or TitleKind.Anime)) return null;
+
+        var season = title.SeasonNumber ?? 0;
+        var episodeNumber = episodeIndex ?? 0;
+        var isFullSeason = episodeIndex is null;
+        var episode = await db.CatalogEpisodes.FirstOrDefaultAsync(e =>
+            e.TitleId == catalogTitleId
+            && e.SeasonNumber == season
+            && e.EpisodeNumber == episodeNumber
+            && e.IsFullSeason == isFullSeason, ct);
+        if (episode is not null) return episode.Id;
+
+        episode = new CatalogEpisodeEntity
+        {
+            TitleId = catalogTitleId,
+            SeasonNumber = season,
+            EpisodeNumber = episodeNumber,
+            IsFullSeason = isFullSeason,
+            EpisodeName = isFullSeason
+                ? season > 0 ? $"Season {season}" : "Season"
+                : $"Episode {episodeNumber}"
+        };
+        db.CatalogEpisodes.Add(episode);
+        await db.SaveChangesAsync(ct);
+        return episode.Id;
+    }
 
 }
