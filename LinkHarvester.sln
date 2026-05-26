@@ -31,6 +31,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinkHarvester.Enrichment.Te
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinkHarvester.Api.Tests", "tests\LinkHarvester.Api.Tests\LinkHarvester.Api.Tests.csproj", "{5D1857EE-A635-4004-9EBD-9ADED2927043}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LinkHarvester.Resolution.Tests", "tests\LinkHarvester.Resolution.Tests\LinkHarvester.Resolution.Tests.csproj", "{63CDF1A7-B5C3-4B14-A8FE-9C8256501DD1}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -88,6 +90,10 @@ Global
 		{5D1857EE-A635-4004-9EBD-9ADED2927043}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{5D1857EE-A635-4004-9EBD-9ADED2927043}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{5D1857EE-A635-4004-9EBD-9ADED2927043}.Release|Any CPU.Build.0 = Release|Any CPU
+		{63CDF1A7-B5C3-4B14-A8FE-9C8256501DD1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{63CDF1A7-B5C3-4B14-A8FE-9C8256501DD1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{63CDF1A7-B5C3-4B14-A8FE-9C8256501DD1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{63CDF1A7-B5C3-4B14-A8FE-9C8256501DD1}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{5C0742BA-0F74-46F5-AC18-DD8390D51FDA} = {F27826EF-0231-4CB2-A39A-02739D7C259B}
@@ -102,5 +108,6 @@ Global
 		{A80A3778-0FCF-4221-8398-1F5BDE3B3F1D} = {F27826EF-0231-4CB2-A39A-02739D7C259B}
 		{DBB68D52-8C85-41F0-A420-D23622A222A3} = {A248B87E-08D8-4415-9A9B-3F8EB7B3A255}
 		{5D1857EE-A635-4004-9EBD-9ADED2927043} = {A248B87E-08D8-4415-9A9B-3F8EB7B3A255}
+		{63CDF1A7-B5C3-4B14-A8FE-9C8256501DD1} = {A248B87E-08D8-4415-9A9B-3F8EB7B3A255}
 	EndGlobalSection
 EndGlobal

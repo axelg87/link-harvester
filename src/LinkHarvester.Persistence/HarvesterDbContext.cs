@@ -21,6 +21,8 @@ public class HarvesterDbContext : DbContext
     public DbSet<CatalogLinkEntity> CatalogLinks => Set<CatalogLinkEntity>();
     public DbSet<CatalogTitleMetadataEntity> CatalogTitleMetadata => Set<CatalogTitleMetadataEntity>();
     public DbSet<CatalogImportRunEntity> CatalogImportRuns => Set<CatalogImportRunEntity>();
+    public DbSet<BackfillRunEntity> BackfillRuns => Set<BackfillRunEntity>();
+    public DbSet<HealthSweepRunEntity> HealthSweepRuns => Set<HealthSweepRunEntity>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder cfg)
     {
@@ -122,6 +124,8 @@ public class HarvesterDbContext : DbContext
             e.Property(t => t.ImdbId).HasMaxLength(32);
             e.Property(t => t.CategoryName).HasMaxLength(64);
             e.Property(t => t.TitlePoster).HasMaxLength(512);
+            e.Property(t => t.HiddenReason).HasMaxLength(128);
+            e.HasIndex(t => t.IsHidden);
         });
 
         b.Entity<CatalogEpisodeEntity>(e =>
@@ -149,6 +153,9 @@ public class HarvesterDbContext : DbContext
             e.Property(l => l.QualityName).HasMaxLength(64);
             e.Property(l => l.AudioLangs).HasMaxLength(128);
             e.Property(l => l.SubLangs).HasMaxLength(128);
+            e.Property(l => l.HealthStatus).HasMaxLength(16);
+            e.Property(l => l.HealthSignature).HasMaxLength(256);
+            e.HasIndex(l => l.HealthStatus);
             e.HasOne(l => l.Title).WithMany(t => t.Links).HasForeignKey(l => l.TitleId)
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasOne(l => l.Episode).WithMany(ep => ep.Links).HasForeignKey(l => l.EpisodeId)
@@ -182,6 +189,24 @@ public class HarvesterDbContext : DbContext
             e.Property(r => r.SourceDescription).HasMaxLength(512);
             e.Property(r => r.Status).HasMaxLength(32);
             e.Property(r => r.Notes).HasMaxLength(1024);
+        });
+
+        b.Entity<BackfillRunEntity>(e =>
+        {
+            e.HasIndex(r => new { r.SourceId, r.Kind, r.StartedAt });
+            e.Property(r => r.SourceId).HasMaxLength(32);
+            e.Property(r => r.Kind).HasMaxLength(32);
+            e.Property(r => r.Status).HasMaxLength(16);
+            e.Property(r => r.LastSeenArticleExternalId).HasMaxLength(64);
+            e.Property(r => r.Error).HasMaxLength(1024);
+        });
+
+        b.Entity<HealthSweepRunEntity>(e =>
+        {
+            e.HasIndex(r => r.StartedAt);
+            e.Property(r => r.Status).HasMaxLength(16);
+            e.Property(r => r.HosterFilter).HasMaxLength(64);
+            e.Property(r => r.Error).HasMaxLength(1024);
         });
     }
 }

@@ -27,6 +27,38 @@ public interface IFeedSource
 }
 
 /// <summary>
+/// Feed source that exposes a paginated backlog suitable for backfill runs.
+/// Implementations walk historical category pages and yield items as they
+/// are discovered, stopping when the page's oldest item is older than
+/// <c>since</c>.
+/// </summary>
+public interface IBackfillFeedSource : IFeedSource
+{
+    /// <summary>
+    /// Walk the historical listing for <paramref name="kind"/> (e.g.
+    /// "films", "series", "mangas") starting at <paramref name="startPage"/>
+    /// and yield each page's items in order, oldest article last.
+    /// Pages keep being fetched as long as the listing returns items AND
+    /// the page contains at least one item published on or after <paramref name="since"/>.
+    /// </summary>
+    IAsyncEnumerable<BackfillListingPage> ListSinceAsync(
+        string kind,
+        DateTimeOffset since,
+        int startPage,
+        CancellationToken ct);
+}
+
+/// <summary>
+/// One page of items yielded by <see cref="IBackfillFeedSource.ListSinceAsync"/>.
+/// </summary>
+public sealed record BackfillListingPage(
+    int Page,
+    string Kind,
+    IReadOnlyList<RawListItem> Items,
+    DateTimeOffset? OldestPublishedAt,
+    DateTimeOffset? NewestPublishedAt);
+
+/// <summary>
 /// Resolves a dl-protect-style protected URL into one or more final hoster links.
 /// </summary>
 public interface ILinkResolver

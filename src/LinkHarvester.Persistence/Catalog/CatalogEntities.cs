@@ -27,6 +27,15 @@ public class CatalogTitleEntity
     public int LinkCount { get; set; }
     public int EpisodeCount { get; set; }
 
+    /// <summary>
+    /// Soft-delete flag — when every link for this title is verifiably
+    /// <see cref="CatalogLinkEntity.HealthStatus"/> = "Dead", the health-sweep
+    /// marks the title hidden. The UI filters them out by default; toggling
+    /// "show hidden" reveals them for audit. We never hard-delete.
+    /// </summary>
+    public bool IsHidden { get; set; }
+    public string? HiddenReason { get; set; }
+
     public CatalogTitleMetadataEntity? Metadata { get; set; }
     public List<CatalogEpisodeEntity> Episodes { get; set; } = new();
     public List<CatalogLinkEntity> Links { get; set; } = new();
@@ -70,6 +79,14 @@ public class CatalogLinkEntity
     public string? SubLangs { get; set; }
     public long? SizeBytes { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>
+    /// Denormalised result of the most recent health check.
+    /// One of: <c>"Alive"</c>, <c>"Dead"</c>, <c>"Unknown"</c>, <c>null</c> (never checked).
+    /// </summary>
+    public string? HealthStatus { get; set; }
+    public DateTimeOffset? HealthCheckedAt { get; set; }
+    public string? HealthSignature { get; set; }
 }
 
 public class CatalogTitleMetadataEntity
