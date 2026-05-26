@@ -98,6 +98,85 @@ public class QuickConnectResolverTests
         Assert.Contains("none returned DSM DownloadStation", ex.Message);
     }
 
+    [Fact]
+    public async Task ResolveAsync_requests_tunnel_when_direct_candidates_fail()
+    {
+        var handler = new StubHttpHandler(req =>
+        {
+            if (req.RequestUri!.Host == "global.quickconnect.to")
+            {
+                return Json("""[{"command":"get_server_info","errno":4,"sites":["dec.quickconnect.to"],"suberrno":2,"version":1}]""");
+            }
+
+            if (req.RequestUri.Host == "dec.quickconnect.to")
+            {
+                var body = req.Content?.ReadAsStringAsync().GetAwaiter().GetResult() ?? "";
+                if (body.Contains("request_tunnel", StringComparison.Ordinal))
+                {
+                    return Json("""
+                        [{
+                          "command":"request_tunnel",
+                          "errno":0,
+                          "service":{
+                            "port":5001,
+                            "pingpong":"DISCONNECTED",
+                            "relay_dn":"synr-cz3.TEST.direct.quickconnect.to",
+                            "relay_dualstack":"synr-cz3.TEST.direct.quickconnect.to",
+                            "relay_port":30773,
+                            "https_port":443
+                          }
+                        }]
+                        """);
+                }
+
+                return Json("""
+                    [{
+                      "command":"get_server_info",
+                      "errno":0,
+                      "service":{
+                        "port":5001,
+                        "ext_port":0,
+                        "pingpong":"DISCONNECTED"
+                      },
+                      "smartdns":{
+                        "host":"TEST.direct.quickconnect.to",
+                        "external":"syn4-test.TEST.direct.quickconnect.to"
+                      }
+                    }]
+                    """);
+            }
+
+            if (req.RequestUri.Host == "test.direct.quickconnect.to"
+                || req.RequestUri.Host == "syn4-test.test.direct.quickconnect.to")
+            {
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+            }
+
+            if (req.RequestUri.Host == "synr-cz3.test.direct.quickconnect.to"
+                && req.RequestUri.Port == 30773)
+            {
+                return Json("""
+                    {
+                      "success": true,
+                      "data": {
+                        "SYNO.API.Auth": { "path": "entry.cgi" },
+                        "SYNO.DownloadStation2.Task": { "path": "entry.cgi" }
+                      }
+                    }
+                    """);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        var resolver = new QuickConnectResolver(new HttpClient(handler), NullLogger<QuickConnectResolver>.Instance);
+
+        var result = await resolver.ResolveAsync("test", CancellationToken.None);
+
+        Assert.Equal("https://synr-cz3.TEST.direct.quickconnect.to:30773", result.BaseUrl);
+        Assert.Contains("https://TEST.direct.quickconnect.to:5001", result.ProbedUrls);
+        Assert.Contains("https://synr-cz3.TEST.direct.quickconnect.to:30773", result.ProbedUrls);
+    }
+
     private static HttpResponseMessage Json(string json) => new(HttpStatusCode.OK)
     {
         Content = new StringContent(json, Encoding.UTF8, "application/json")
