@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -5,6 +6,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace LinkHarvester.Persistence.Migrations
 {
     /// <inheritdoc />
+    [DbContext(typeof(HarvesterDbContext))]
+    [Migration("20260525233100_AddSynologyQuickConnect")]
     public partial class AddSynologyQuickConnect : Migration
     {
         /// <inheritdoc />
