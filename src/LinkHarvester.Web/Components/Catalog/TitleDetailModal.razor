@@ -17,10 +17,11 @@
                     @if (Title.Rating.HasValue) { <span>★ @Title.Rating.Value.ToString("0.0")</span> }
                     @if (Title.Runtime.HasValue) { <span>@Title.Runtime min</span> }
                     <span class="lh-tag">@Title.Category</span>
+                    @if (Title.MetadataUncertain) { <span class="lh-tag">metadata uncertain</span> }
                 </div>
-                @if (Title.Genres.Count > 0)
+                @if ((Title.Genres ?? new()).Count > 0)
                 {
-                    <div class="lh-muted">@string.Join(" · ", Title.Genres)</div>
+                    <div class="lh-muted">@string.Join(" · ", Title.Genres ?? new())</div>
                 }
             </div>
         </header>
@@ -30,18 +31,19 @@
             <p class="lh-overview">@Title.Overview</p>
         }
 
-        @if (Title.Links.Count > 0)
+        @if ((Title.Links ?? new()).Count > 0)
         {
             <section class="lh-modal-section">
                 <h3>Links</h3>
                 <ul class="lh-link-list">
-                    @foreach (var l in Title.Links)
+                    @foreach (var l in Title.Links ?? new())
                     {
                         <li>
                             <label class="lh-link-row">
                                 <input type="checkbox" checked="@SelectedLinkIds.Contains(l.Id)"
-                                       @onchange="@(e => InvokeToggle(l.Id, (bool)e.Value!))" />
+                                       @onchange="@(e => InvokeToggle(l.Id, e.Value is bool b && b))" />
                                 <span class="lh-link-host">@l.Host</span>
+                                @if (string.Equals(l.Source, "zt", StringComparison.OrdinalIgnoreCase)) { <span class="lh-tag">ZT</span> }
                                 @if (!string.IsNullOrEmpty(l.Quality)) { <span class="lh-tag lh-tag-quality">@l.Quality</span> }
                                 @if (l.SizeBytes.HasValue) { <span class="lh-muted">@FormatHelpers.FormatSize(l.SizeBytes.Value)</span> }
                                 @if (!string.IsNullOrEmpty(l.AudioLangs)) { <span class="lh-muted">@l.AudioLangs</span> }
@@ -52,18 +54,19 @@
             </section>
         }
 
-        @foreach (var ep in Title.Episodes)
+        @foreach (var ep in Title.Episodes ?? new())
         {
             <section class="lh-modal-section">
                 <h3>@FormatEpisodeHeader(ep)</h3>
                 <ul class="lh-link-list">
-                    @foreach (var l in ep.Links)
+                    @foreach (var l in ep.Links ?? new())
                     {
                         <li>
                             <label class="lh-link-row">
                                 <input type="checkbox" checked="@SelectedLinkIds.Contains(l.Id)"
-                                       @onchange="@(e => InvokeToggle(l.Id, (bool)e.Value!))" />
+                                       @onchange="@(e => InvokeToggle(l.Id, e.Value is bool b && b))" />
                                 <span class="lh-link-host">@l.Host</span>
+                                @if (string.Equals(l.Source, "zt", StringComparison.OrdinalIgnoreCase)) { <span class="lh-tag">ZT</span> }
                                 @if (!string.IsNullOrEmpty(l.Quality)) { <span class="lh-tag lh-tag-quality">@l.Quality</span> }
                                 @if (l.SizeBytes.HasValue) { <span class="lh-muted">@FormatHelpers.FormatSize(l.SizeBytes.Value)</span> }
                             </label>

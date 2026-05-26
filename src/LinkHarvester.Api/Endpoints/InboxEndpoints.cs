@@ -1,6 +1,7 @@
 using System.Text.Json;
 using LinkHarvester.Core;
 using LinkHarvester.Persistence;
+using LinkHarvester.Persistence.Catalog;
 using LinkHarvester.Worker;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -23,6 +24,20 @@ public static class InboxEndpoints
                 .Include(t => t.Articles)
                 .AsNoTracking()
                 .ToListAsync(ct);
+            var cutoff = DateTimeOffset.UtcNow.AddDays(-3);
+            titles = titles
+                .Where(t => t.Articles.Any(a => a.DiscoveredAt >= cutoff &&
+                    (a.Status == ArticleStatus.Parsed || a.Status == ArticleStatus.Resolved || a.Status == ArticleStatus.InInbox)))
+                .ToList();
+
+            var catalogIds = titles.Where(t => t.CatalogTitleId.HasValue).Select(t => t.CatalogTitleId!.Value).Distinct().ToList();
+            var catalogById = catalogIds.Count == 0
+                ? new Dictionary<int, CatalogTitleEntity>()
+                : await db.CatalogTitles
+                    .Include(t => t.Metadata)
+                    .AsNoTracking()
+                    .Where(t => catalogIds.Contains(t.Id))
+                    .ToDictionaryAsync(t => t.Id, ct);
 
             var dto = titles.Select(t =>
             {
@@ -37,8 +52,13 @@ public static class InboxEndpoints
 
                 return new InboxCardDto(
                     TitleId: t.Id,
+                    CatalogTitleId: t.CatalogTitleId,
                     DisplayTitle: t.DisplayTitle,
+                    Poster: t.CatalogTitleId is int cid && catalogById.TryGetValue(cid, out var catalog) ? catalog.TitlePoster : null,
                     Year: t.Year,
+                    Rating: t.CatalogTitleId is int cid2 && catalogById.TryGetValue(cid2, out var catalog2) ? catalog2.Metadata?.VoteAverage : null,
+                    Genres: t.CatalogTitleId is int cid3 && catalogById.TryGetValue(cid3, out var catalog3) ? SafeGenres(catalog3.Metadata?.GenresJson) : new(),
+                    MetadataUncertain: t.CatalogTitleId is int cid4 && catalogById.TryGetValue(cid4, out var catalog4) && catalog4.Metadata?.MetadataUncertain == true,
                     Kind: t.Kind.ToString(),
                     SeasonNumber: t.SeasonNumber,
                     BetterAvailable: t.Status == TitleStatus.Submitted &&
@@ -131,8 +151,17 @@ public static class InboxEndpoints
         catch { return new(); }
     }
 
+    private static List<string> SafeGenres(string? json)
+    {
+        if (string.IsNullOrEmpty(json) || json == "[]") return new();
+        try { return JsonSerializer.Deserialize<List<string>>(json) ?? new(); }
+        catch { return new(); }
+    }
+
     public sealed record InboxCardDto(
-        int TitleId, string DisplayTitle, int? Year, string Kind, int? SeasonNumber,
+        int TitleId, int? CatalogTitleId, string DisplayTitle, string? Poster,
+        int? Year, double? Rating, List<string> Genres, bool MetadataUncertain,
+        string Kind, int? SeasonNumber,
         bool BetterAvailable, DateTimeOffset UpdatedAt,
         ArticleDto Chosen, List<ArticleDto> OtherVariants);
 

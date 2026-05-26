@@ -51,7 +51,9 @@ public sealed record ArticleDetails(
     string AggregatorDlProtectUrl,
     IReadOnlyList<HosterLinks> Hosters,
     IReadOnlyList<string> SiblingArticleUrls,
-    string ContentHash);
+    string ContentHash,
+    string? ImdbId = null,
+    int? TmdbId = null);
 
 /// <summary>
 /// Output of a quality string parser.

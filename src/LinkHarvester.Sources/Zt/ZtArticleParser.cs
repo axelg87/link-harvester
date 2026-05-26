@@ -54,6 +54,12 @@ public sealed class ZtArticleParser
     private static readonly Regex EpisodeCountRegex =
         new(@"(?<n>\d+)\s+Episodes?", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    private static readonly Regex ImdbIdRegex =
+        new(@"imdb\.com/title/(?<id>tt\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex TmdbIdRegex =
+        new(@"themoviedb\.org/(?:movie|tv)/(?<id>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     private static readonly Regex InlineQualityFromHostersRegex =
         new(@"Qualité\s+(?<q>[^|<]+?)\s*\|\s*(?<l>[^<]+?)</div>", RegexOptions.Compiled);
 
@@ -88,6 +94,8 @@ public sealed class ZtArticleParser
         var aggregator = ExtractAggregatorDlProtect(html);
         var hosters = ExtractHosterLinks(html);
         var siblings = ExtractSiblingArticleUrls(doc);
+        var imdbId = ExtractImdbId(html);
+        var tmdbId = ExtractTmdbId(html);
 
         var contentHash = ComputeContentHash(aggregator, hosters);
 
@@ -106,7 +114,9 @@ public sealed class ZtArticleParser
             AggregatorDlProtectUrl: aggregator,
             Hosters: hosters,
             SiblingArticleUrls: siblings,
-            ContentHash: contentHash);
+            ContentHash: contentHash,
+            ImdbId: imdbId,
+            TmdbId: tmdbId);
     }
 
     private static string ExtractDisplayTitle(IHtmlDocument doc)
@@ -166,6 +176,18 @@ public sealed class ZtArticleParser
             _ => 1
         };
         return (long)(n * mult);
+    }
+
+    private static string? ExtractImdbId(string html)
+    {
+        var m = ImdbIdRegex.Match(html);
+        return m.Success ? m.Groups["id"].Value : null;
+    }
+
+    private static int? ExtractTmdbId(string html)
+    {
+        var m = TmdbIdRegex.Match(html);
+        return m.Success && int.TryParse(m.Groups["id"].Value, out var id) ? id : null;
     }
 
     private static int? ExtractEpisodeCount(string html, IHtmlDocument doc)

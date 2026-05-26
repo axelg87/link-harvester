@@ -7,6 +7,7 @@ using LinkHarvester.Enrichment;
 using LinkHarvester.Persistence;
 using LinkHarvester.Persistence.Catalog;
 using LinkHarvester.Synology;
+using LinkHarvester.Worker;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -110,7 +111,7 @@ public static class CatalogEndpoints
             if (!string.IsNullOrWhiteSpace(originalLanguage))
                 joined = joined.Where(x => x.Meta != null && x.Meta.OriginalLanguage == originalLanguage);
             if (hasMetadata == true)
-                joined = joined.Where(x => x.Meta != null && (x.Meta.EnrichmentSource == "tmdb_direct" || x.Meta.EnrichmentSource == "tmdb_imdb_lookup"));
+                joined = joined.Where(x => x.Meta != null && x.Meta.EnrichmentSource.StartsWith("tmdb_"));
 
             if (!string.IsNullOrWhiteSpace(genres))
             {
@@ -144,7 +145,8 @@ public static class CatalogEndpoints
                 Overview: x.Meta?.Overview,
                 Genres: SafeGenres(x.Meta?.GenresJson),
                 OriginalLanguage: x.Meta?.OriginalLanguage,
-                EnrichmentSource: x.Meta?.EnrichmentSource
+                EnrichmentSource: x.Meta?.EnrichmentSource,
+                MetadataUncertain: x.Meta?.MetadataUncertain == true
             )).ToList();
 
             return Results.Ok(new SearchPageDto(totalCount, page, pageSize, dto));
@@ -174,6 +176,7 @@ public static class CatalogEndpoints
                 OriginalLanguage: t.Metadata?.OriginalLanguage,
                 ImdbId: t.ImdbId,
                 TmdbId: t.TmdbId,
+                MetadataUncertain: t.Metadata?.MetadataUncertain == true,
                 Links: t.Links.Where(l => l.EpisodeId == null).Select(MapLink).ToList(),
                 Episodes: t.Episodes.OrderBy(e => e.IsFullSeason ? 0 : 1)
                                      .ThenBy(e => e.SeasonNumber).ThenBy(e => e.EpisodeNumber)
@@ -259,6 +262,7 @@ public static class CatalogEndpoints
             HarvesterDbContext db,
             IDownloadStationClient dsm,
             ISettingsService settings,
+            SubmissionService submissions,
             CancellationToken ct) =>
         {
             if (req.LinkIds is null || req.LinkIds.Count == 0)
@@ -270,19 +274,73 @@ public static class CatalogEndpoints
                 .ToListAsync(ct);
             if (links.Count == 0) return Results.NotFound();
 
-            var urls = links.Select(l => l.LinkUrl).Distinct().ToList();
+            var ztLinks = links
+                .Where(l => string.Equals(l.LinkSource, "zt", StringComparison.OrdinalIgnoreCase) && l.HarvesterArticleId.HasValue)
+                .ToList();
+            if (ztLinks.Count > 0)
+            {
+                var taskIds = new List<string>();
+                var errors = new List<string>();
+                foreach (var zt in ztLinks)
+                {
+                    var sub = await submissions.SendToDsmAsync(zt.HarvesterArticleId!.Value, ct);
+                    if (sub.Status == SubmissionStatus.Sent)
+                        taskIds.AddRange(JsonSerializer.Deserialize<List<string>>(sub.DsmTaskIdsJson) ?? new());
+                    else
+                        errors.Add(sub.ResponseMessage ?? $"ZT send failed for article {zt.HarvesterArticleId}");
+                }
+
+                if (links.Count == ztLinks.Count)
+                {
+                    return Results.Ok(new SendResultDto(
+                        Ok: errors.Count == 0,
+                        Error: errors.Count == 0 ? null : string.Join(" | ", errors),
+                        TaskIds: taskIds,
+                        Submitted: ztLinks.Count));
+                }
+            }
+
+            var directLinks = links
+                .Where(l => !string.Equals(l.LinkSource, "zt", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var urls = directLinks.Select(l => l.LinkUrl).Distinct().ToList();
+            if (urls.Count == 0) return Results.BadRequest(new { error = "no direct catalog links provided" });
             var kindIsMovie = links.All(l => string.Equals(l.Title.CategoryName, "Films", StringComparison.OrdinalIgnoreCase));
             var dest = kindIsMovie
                 ? settings.Current.SynologyMovieDestination
                 : settings.Current.SynologySeriesDestination;
+            var attempt = new SubmissionEntity
+            {
+                Source = SendSourceKind.Catalog,
+                CatalogTitleId = links.Select(l => l.TitleId).Distinct().Count() == 1 ? links[0].TitleId : null,
+                CatalogLinkIdsJson = JsonSerializer.Serialize(directLinks.Select(l => l.Id).ToList()),
+                DisplayTitle = links.Select(l => l.Title.TitleName).Distinct().Count() == 1 ? links[0].Title.TitleName : $"{links.Count} catalog links",
+                Destination = dest,
+                UrlCount = urls.Count,
+                SubmittedUrlsJson = JsonSerializer.Serialize(urls),
+                Status = SubmissionStatus.Pending,
+                SubmittedAt = DateTimeOffset.UtcNow
+            };
+            db.Submissions.Add(attempt);
+            await db.SaveChangesAsync(ct);
 
             try
             {
                 var taskIds = await dsm.CreateTasksAsync(urls, dest, ct);
+                attempt.Status = SubmissionStatus.Sent;
+                attempt.DsmTaskIdsJson = JsonSerializer.Serialize(taskIds);
+                attempt.CompletedAt = DateTimeOffset.UtcNow;
+                await db.SaveChangesAsync(ct);
                 return Results.Ok(new SendResultDto(true, null, taskIds.ToList(), urls.Count));
             }
             catch (DsmException dx)
             {
+                attempt.Status = SubmissionStatus.Failed;
+                attempt.ResponseMessage = dx.HumanMessage;
+                attempt.DsmErrorCode = dx.Code;
+                attempt.DsmFailedUrl = dx.FailedUrl;
+                attempt.CompletedAt = DateTimeOffset.UtcNow;
+                await db.SaveChangesAsync(ct);
                 // Map to a proper HTTP status so the client can branch on it,
                 // but keep ok=false in the body so the existing WASM toast
                 // path keeps working without changes.
@@ -304,8 +362,7 @@ public static class CatalogEndpoints
             var titles = await db.CatalogTitles.CountAsync(ct);
             var links = await db.CatalogLinks.CountAsync(ct);
             var episodes = await db.CatalogEpisodes.CountAsync(ct);
-            var enriched = await db.CatalogTitleMetadata.CountAsync(m =>
-                m.EnrichmentSource == "tmdb_direct" || m.EnrichmentSource == "tmdb_imdb_lookup", ct);
+            var enriched = await db.CatalogTitleMetadata.CountAsync(m => m.EnrichmentSource.StartsWith("tmdb_"), ct);
             var failed = await db.CatalogTitleMetadata.CountAsync(m => m.EnrichmentSource == "failed", ct);
 
             // Subset of the failed bucket that looks like SQLite write
@@ -353,8 +410,9 @@ public static class CatalogEndpoints
     }
 
     private static LinkDto MapLink(CatalogLinkEntity l) => new(
-        Id: l.Id, Url: l.LinkUrl, Host: l.HostName, Quality: l.QualityName,
-        AudioLangs: l.AudioLangs, SubLangs: l.SubLangs, SizeBytes: l.SizeBytes);
+        Id: l.Id, Url: l.LinkUrl, Host: string.IsNullOrWhiteSpace(l.HostName) ? "Unknown" : l.HostName, Quality: l.QualityName,
+        AudioLangs: l.AudioLangs, SubLangs: l.SubLangs, SizeBytes: l.SizeBytes,
+        Source: string.IsNullOrWhiteSpace(l.LinkSource) ? "catalog" : l.LinkSource, HarvesterArticleId: l.HarvesterArticleId);
 
     private static List<string> SafeGenres(string? json)
     {
@@ -383,7 +441,7 @@ public static class CatalogEndpoints
         int Id, string Title, string? OriginalTitle, string Category, string? Poster,
         int LinkCount, int EpisodeCount,
         int? Year, double? Rating, int? Runtime, string? Overview,
-        List<string> Genres, string? OriginalLanguage, string? EnrichmentSource);
+        List<string> Genres, string? OriginalLanguage, string? EnrichmentSource, bool MetadataUncertain);
 
     public sealed record SearchPageDto(int Total, int Page, int PageSize, List<SearchHitDto> Items);
 
@@ -391,13 +449,14 @@ public static class CatalogEndpoints
         int Id, string Title, string? OriginalTitle, string Category, string? Poster,
         int? Year, double? Rating, int? Runtime, string? Overview,
         List<string> Genres, string? OriginalLanguage, string? ImdbId, int? TmdbId,
-        List<LinkDto> Links, List<EpisodeDto> Episodes);
+        bool MetadataUncertain, List<LinkDto> Links, List<EpisodeDto> Episodes);
 
     public sealed record EpisodeDto(int Id, int SeasonNumber, int EpisodeNumber,
         string? EpisodeName, bool IsFullSeason, List<LinkDto> Links);
 
     public sealed record LinkDto(int Id, string Url, string Host, string? Quality,
-        string? AudioLangs, string? SubLangs, long? SizeBytes);
+        string? AudioLangs, string? SubLangs, long? SizeBytes,
+        string Source, int? HarvesterArticleId);
 
     public sealed record FacetEntry(string Key, int Count);
 

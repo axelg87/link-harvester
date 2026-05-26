@@ -1,0 +1,44 @@
+<article class="lh-tile" @onclick="OnOpen">
+    <div class="lh-poster">
+        @if (!string.IsNullOrEmpty(Poster))
+        {
+            <img loading="lazy" src="@Poster" alt="@Title" />
+        }
+        else
+        {
+            <div class="lh-poster-fallback">@Category</div>
+        }
+        @if (Rating.HasValue)
+        {
+            <span class="lh-rating">@Rating.Value.ToString("0.0")</span>
+        }
+        @if (MetadataUncertain)
+        {
+            <span class="lh-rating lh-rating-warn">?</span>
+        }
+    </div>
+    <div class="lh-tile-body">
+        <div class="lh-tile-title">@Title</div>
+        <div class="lh-tile-meta">
+            @if (Year.HasValue) { <span>@Year</span> }
+            <span class="lh-tag">@Category</span>
+            @if (!string.IsNullOrEmpty(SourceLabel)) { <span class="lh-tag">@SourceLabel</span> }
+        </div>
+        @if (Genres.Count > 0)
+        {
+            <div class="lh-tile-genres">@string.Join(" · ", Genres.Take(3))</div>
+        }
+    </div>
+</article>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter] public string? Poster { get; set; }
+    [Parameter] public string Category { get; set; } = "";
+    [Parameter] public int? Year { get; set; }
+    [Parameter] public double? Rating { get; set; }
+    [Parameter] public List<string> Genres { get; set; } = new();
+    [Parameter] public bool MetadataUncertain { get; set; }
+    [Parameter] public string? SourceLabel { get; set; }
+    [Parameter] public EventCallback OnOpen { get; set; }
+}

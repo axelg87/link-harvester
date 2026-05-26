@@ -77,6 +77,21 @@ public sealed class HarvesterApi
         return (await resp.Content.ReadFromJsonAsync<SynologyTestResult>(cancellationToken: ct))!;
     }
 
+    public async Task<SendHistoryPage> GetSendHistoryAsync(string? status, string? source, int page = 1, int pageSize = 50, CancellationToken ct = default)
+    {
+        var qs = new List<string> { $"page={page}", $"pageSize={pageSize}" };
+        if (!string.IsNullOrWhiteSpace(status)) qs.Add($"status={Uri.EscapeDataString(status)}");
+        if (!string.IsNullOrWhiteSpace(source)) qs.Add($"source={Uri.EscapeDataString(source)}");
+        return (await _http.GetFromJsonAsync<SendHistoryPage>("api/sends?" + string.Join('&', qs), ct))!;
+    }
+
+    public async Task<SendResendResult> ResendAsync(int id, CancellationToken ct = default)
+    {
+        using var resp = await _http.PostAsync($"api/sends/{id}/resend", null, ct);
+        resp.EnsureSuccessStatusCode();
+        return (await resp.Content.ReadFromJsonAsync<SendResendResult>(cancellationToken: ct))!;
+    }
+
     public async Task<QuickConnectResolveResult> ResolveQuickConnectAsync(string? quickConnectId, CancellationToken ct = default)
     {
         using var resp = await _http.PostAsJsonAsync("api/settings/resolve-quickconnect", new { quickConnectId }, ct);

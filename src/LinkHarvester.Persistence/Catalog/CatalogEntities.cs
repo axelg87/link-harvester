@@ -61,6 +61,8 @@ public class CatalogLinkEntity
     public CatalogEpisodeEntity? Episode { get; set; }
 
     public string LinkUrl { get; set; } = string.Empty;
+    public string LinkSource { get; set; } = "catalog";
+    public int? HarvesterArticleId { get; set; }
     public string HostName { get; set; } = string.Empty;
     public string NormalizedHost { get; set; } = string.Empty;
     public string? QualityName { get; set; }
@@ -90,6 +92,7 @@ public class CatalogTitleMetadataEntity
     public string? Status { get; set; }
 
     public string EnrichmentSource { get; set; } = "pending";
+    public bool MetadataUncertain { get; set; }
     public int Attempts { get; set; }
     public string? LastError { get; set; }
     public DateTimeOffset? LastEnrichedAt { get; set; }

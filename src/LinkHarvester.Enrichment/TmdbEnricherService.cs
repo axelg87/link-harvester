@@ -254,6 +254,7 @@ public sealed class TmdbEnricherService : BackgroundService
                         ImdbId = t.ImdbId,
                         Category = t.CategoryName,
                         TitleName = t.TitleName,
+                        Year = m == null ? null : m.Year,
                         Attempts = m == null ? 0 : m.Attempts
                     };
         return await query.Take(limit).ToListAsync(ct);
@@ -371,8 +372,17 @@ public sealed class TmdbEnricherService : BackgroundService
 
         if (details is null)
         {
-            await RecordFailureAsync(item, "no_tmdb_match", ct);
-            return;
+            var match = await _tmdb.SearchByTitleAsync(item.TitleName, item.Year, isSeries, apiKey, ct);
+            if (match is not null)
+            {
+                details = await _tmdb.FetchByTmdbIdAsync(match.TmdbId, isSeries, apiKey, ct);
+                source = match.Uncertain ? "tmdb_search_uncertain" : "tmdb_search";
+            }
+            if (details is null)
+            {
+                await RecordFailureAsync(item, "no_tmdb_match", ct);
+                return;
+            }
         }
 
         await using var db = await _factory.CreateDbContextAsync(ct);
@@ -392,6 +402,7 @@ public sealed class TmdbEnricherService : BackgroundService
         meta.Overview = details.Overview;
         meta.Status = details.Status;
         meta.EnrichmentSource = source;
+        meta.MetadataUncertain = string.Equals(source, "tmdb_search_uncertain", StringComparison.Ordinal);
         meta.LastEnrichedAt = DateTimeOffset.UtcNow;
         meta.Attempts = item.Attempts + 1;
         meta.LastError = null;
@@ -423,6 +434,7 @@ public sealed class TmdbEnricherService : BackgroundService
         public string? ImdbId { get; init; }
         public string Category { get; init; } = "";
         public string TitleName { get; init; } = "";
+        public int? Year { get; init; }
         public int Attempts { get; init; }
     }
 }

@@ -42,11 +42,18 @@ public enum SubmissionStatus
 {
     Pending = 0,
     Sent = 1,
-    Failed = 2
+    Failed = 2,
+    ResolutionFailed = 3
 }
 
 public enum SynologyConnectionMode
 {
     Direct = 0,
     QuickConnect = 1
+}
+
+public enum SendSourceKind
+{
+    ZtArticle = 0,
+    Catalog = 1
 }

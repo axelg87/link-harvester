@@ -50,6 +50,10 @@
                     </select>
                 </div>
             </div>
+            @if (!string.IsNullOrEmpty(_titleError))
+            {
+                <p class="lh-error">@_titleError</p>
+            }
 
             @if (_searching)
             {
@@ -67,33 +71,15 @@
                 <div class="lh-grid">
                     @foreach (var hit in _page.Items)
                     {
-                        <article class="lh-tile" @onclick="() => OpenTitle(hit.Id)">
-                            <div class="lh-poster">
-                                @if (!string.IsNullOrEmpty(hit.Poster))
-                                {
-                                    <img loading="lazy" src="@hit.Poster" alt="@hit.Title" />
-                                }
-                                else
-                                {
-                                    <div class="lh-poster-fallback">@hit.Category</div>
-                                }
-                                @if (hit.Rating.HasValue)
-                                {
-                                    <span class="lh-rating">@hit.Rating.Value.ToString("0.0")</span>
-                                }
-                            </div>
-                            <div class="lh-tile-body">
-                                <div class="lh-tile-title">@hit.Title</div>
-                                <div class="lh-tile-meta">
-                                    @if (hit.Year.HasValue) { <span>@hit.Year</span> }
-                                    <span class="lh-tag">@hit.Category</span>
-                                </div>
-                                @if (hit.Genres.Count > 0)
-                                {
-                                    <div class="lh-tile-genres">@string.Join(" · ", hit.Genres.Take(3))</div>
-                                }
-                            </div>
-                        </article>
+                        <MediaTile
+                            Title="@hit.Title"
+                            Poster="@hit.Poster"
+                            Category="@hit.Category"
+                            Year="@hit.Year"
+                            Rating="@hit.Rating"
+                            Genres="@(hit.Genres ?? new())"
+                            MetadataUncertain="@hit.MetadataUncertain"
+                            OnOpen="@(() => OpenTitle(hit.Id))" />
                     }
                 </div>
 
@@ -139,6 +125,7 @@
     // Separate from _sendMessage so a transient search error doesn't appear
     // inside the open title-detail modal where it makes no sense.
     private string? _searchError;
+    private string? _titleError;
 
     private int TotalPages => _page is null || _page.PageSize == 0 ? 1 : Math.Max(1, (int)Math.Ceiling(_page.Total / (double)_page.PageSize));
 
@@ -217,19 +204,27 @@
 
     private async Task OpenTitle(int id)
     {
-        _selectedTitle = await Api.GetTitleAsync(id);
-        _selectedLinkIds = new HashSet<int>();
-        _sendMessage = null;
-        // Pre-select the best link by hoster priority (1fichier > rapidgator > …)
-        // and largest size.
-        if (_selectedTitle is not null)
+        _titleError = null;
+        try
         {
-            var best = _selectedTitle.Links
-                .Concat(_selectedTitle.Episodes.SelectMany(e => e.Links))
+            var title = await Api.GetTitleAsync(id);
+            _selectedLinkIds = new HashSet<int>();
+            _sendMessage = null;
+            if (title is null) return;
+            _selectedTitle = title;
+
+            var links = title.Links ?? new();
+            var episodeLinks = (title.Episodes ?? new()).SelectMany(e => e.Links ?? new());
+            var best = links
+                .Concat(episodeLinks)
                 .OrderBy(l => HostRank(l.Host))
                 .ThenByDescending(l => l.SizeBytes ?? 0)
                 .FirstOrDefault();
             if (best is not null) _selectedLinkIds.Add(best.Id);
+        }
+        catch (Exception ex)
+        {
+            _titleError = "Could not open title: " + ex.Message;
         }
     }
 
@@ -260,8 +255,9 @@
     // Hoster pre-select ordering. Hardcoded for now; the audit flagged that
     // this should read user-configured HosterPriority instead, but plumbing
     // settings through the catalog page is a separate change.
-    private static int HostRank(string host)
+    private static int HostRank(string? host)
     {
+        if (string.IsNullOrWhiteSpace(host)) return 9;
         var h = host.ToLowerInvariant();
         if (h.Contains("1fichier")) return 0;
         if (h.Contains("rapidgator")) return 1;

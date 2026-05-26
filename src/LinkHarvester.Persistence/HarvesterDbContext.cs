@@ -39,9 +39,11 @@ public class HarvesterDbContext : DbContext
             // this composite index it's a full table scan that grows linearly
             // with scan history.
             e.HasIndex(t => new { t.Status, t.UpdatedAt });
+            e.HasIndex(t => t.CatalogTitleId);
             e.Property(t => t.Canonical).HasMaxLength(512);
             e.Property(t => t.NormalizedTitle).HasMaxLength(512);
             e.Property(t => t.DisplayTitle).HasMaxLength(512);
+            e.Property(t => t.ImdbId).HasMaxLength(32);
         });
 
         b.Entity<ArticleEntity>(e =>
@@ -69,8 +71,16 @@ public class HarvesterDbContext : DbContext
         b.Entity<SubmissionEntity>(e =>
         {
             e.HasIndex(s => s.ArticleId);
+            e.HasIndex(s => new { s.Source, s.SubmittedAt });
+            e.HasIndex(s => new { s.Status, s.SubmittedAt });
+            e.HasIndex(s => s.CatalogTitleId);
+            e.Property(s => s.DisplayTitle).HasMaxLength(512);
+            e.Property(s => s.Destination).HasMaxLength(256);
+            e.Property(s => s.ResponseMessage).HasMaxLength(1024);
+            e.Property(s => s.DsmFailedUrl).HasMaxLength(2048);
+            e.Property(s => s.CatalogLinkIdsJson).HasMaxLength(1024);
             e.HasOne(s => s.Article).WithMany().HasForeignKey(s => s.ArticleId)
-                .OnDelete(DeleteBehavior.Cascade);
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         b.Entity<ScanRunEntity>(e =>
@@ -128,9 +138,12 @@ public class HarvesterDbContext : DbContext
             e.HasIndex(l => l.ExternalLinkId).IsUnique();
             e.HasIndex(l => l.TitleId);
             e.HasIndex(l => l.EpisodeId);
+            e.HasIndex(l => l.HarvesterArticleId);
+            e.HasIndex(l => l.LinkSource);
             e.HasIndex(l => l.NormalizedHost);
             e.HasIndex(l => l.QualityName);
             e.Property(l => l.LinkUrl).HasMaxLength(2048);
+            e.Property(l => l.LinkSource).HasMaxLength(32);
             e.Property(l => l.HostName).HasMaxLength(64);
             e.Property(l => l.NormalizedHost).HasMaxLength(64);
             e.Property(l => l.QualityName).HasMaxLength(64);
