@@ -66,6 +66,10 @@
         <span>Series destination folder</span>
         <InputText @bind-Value="Form.SynologySeriesDestination" placeholder="video/series" />
     </label>
+    <label class="lh-field">
+        <span>Anime destination folder</span>
+        <InputText @bind-Value="Form.SynologyAnimeDestination" placeholder="video/anime" />
+    </label>
 
     <div class="lh-row">
         <button type="button" class="lh-secondary" @onclick="OnTestSynology" disabled="@(Busy || Testing)">

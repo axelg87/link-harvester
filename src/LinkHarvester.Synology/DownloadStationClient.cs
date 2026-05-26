@@ -195,17 +195,98 @@ public sealed class DownloadStationClient : IDownloadStationClient
         finally { _sessionGate.Release(); }
     }
 
+    public async Task EnsureFoldersAsync(IEnumerable<string> folderPaths, CancellationToken ct)
+    {
+        var paths = folderPaths
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Select(p => p.Trim().Trim('/'))
+            .Where(p => p.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(p => p.Length) // shallow → deep, so parents are created first
+            .ToList();
+        if (paths.Count == 0) return;
+
+        var s = _settings.Current;
+        var baseUrl = await _quickConnectEndpoints.EnsureResolvedBaseUrlAsync(forceRefresh: false, ct);
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            throw DsmException.NotConfigured("Base URL");
+        if (string.IsNullOrWhiteSpace(s.SynologyUsername) || string.IsNullOrWhiteSpace(s.SynologyPassword))
+            throw DsmException.NotConfigured("credentials");
+
+        await EnsureSessionAsync(s, baseUrl, ct);
+
+        var endpoint = new Uri(new Uri(baseUrl), "/webapi/entry.cgi");
+        foreach (var path in paths)
+        {
+            ct.ThrowIfCancellationRequested();
+            var slash = path.LastIndexOf('/');
+            var parent = slash > 0 ? path[..slash] : path;
+            var name = slash > 0 ? path[(slash + 1)..] : path;
+            if (slash <= 0)
+            {
+                // No nesting (e.g. "video"); skip — only mkdir leaf-with-parent shapes.
+                continue;
+            }
+
+            var form = new Dictionary<string, string>
+            {
+                ["api"] = "SYNO.FileStation.CreateFolder",
+                ["version"] = "2",
+                ["method"] = "create",
+                ["folder_path"] = $"\"/{parent}\"",
+                ["name"] = $"\"{name}\"",
+                ["force_parent"] = "true",
+                ["_sid"] = _sid!
+            };
+
+            HttpResponseMessage resp;
+            string body;
+            try
+            {
+                using var content = new FormUrlEncodedContent(form);
+                resp = await _http.PostAsync(endpoint, content, ct);
+                body = await resp.Content.ReadAsStringAsync(ct);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+            {
+                throw DsmException.ForTransport(baseUrl, ex);
+            }
+
+            if (!resp.IsSuccessStatusCode)
+                throw DsmException.ForHttp(resp.StatusCode, baseUrl, body);
+
+            DsmEnvelope<object>? parsed;
+            try { parsed = JsonSerializer.Deserialize<DsmEnvelope<object>>(body); }
+            catch (JsonException) { parsed = null; }
+            if (parsed is null)
+                throw DsmException.ForUnparseable(baseUrl, body);
+
+            if (!parsed.Success)
+            {
+                var code = parsed.Error?.Code ?? 0;
+                // Code 408 = file/folder already exists. That's the happy idempotent path.
+                if (code == 408) { _log.LogDebug("FileStation: folder /{Path} already exists", path); continue; }
+                if (code is 105 or 119) _sid = null;
+                throw DsmException.ForCode(code, s.SynologyUsername, baseUrl, failedUrl: null);
+            }
+
+            _log.LogInformation("FileStation: created folder /{Path}", path);
+        }
+    }
+
     private bool ShouldRefreshQuickConnectEndpoint(DsmException ex)
     {
         if (_settings.Current.SynologyConnectionMode != SynologyConnectionMode.QuickConnect)
             return false;
-        return ex.Code is DsmException.SyntheticUnreachable
-            or DsmException.SyntheticTimeout
-            or DsmException.SyntheticUnparseable
-            or 404
-            or 502
-            or 503
-            or 504;
+        // We deliberately only retry on SyntheticUnreachable — DNS / connection
+        // refused / network unreachable. Those happen before any bytes hit
+        // DSM so a re-resolve + retry is safe.
+        //
+        // We DO NOT retry on SyntheticTimeout, SyntheticUnparseable, or 5xx
+        // gateway codes: those can fire after DSM has already accepted the
+        // create-task POST. Retrying then produces a duplicate download —
+        // exactly the bug we just fixed.
+        return ex.Code is DsmException.SyntheticUnreachable;
     }
 
     private sealed record DsmEnvelope<T>(

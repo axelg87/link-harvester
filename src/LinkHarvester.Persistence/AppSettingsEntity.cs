@@ -20,6 +20,7 @@ public class AppSettingsEntity
     public string? SynologyOtpCode { get; set; }
     public string SynologyMovieDestination { get; set; } = "video/movies";
     public string SynologySeriesDestination { get; set; } = "video/series";
+    public string SynologyAnimeDestination { get; set; } = "video/anime";
 
     // Harvester
     public int ScanIntervalMinutes { get; set; } = 30;

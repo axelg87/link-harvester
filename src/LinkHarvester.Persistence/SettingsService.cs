@@ -22,6 +22,7 @@ public sealed class SettingsService : ISettingsService
         SynologyOtpCode: null,
         SynologyMovieDestination: "video/movies",
         SynologySeriesDestination: "video/series",
+        SynologyAnimeDestination: "video/anime",
         ScanIntervalMinutes: 30,
         ScanOnStartup: true,
         HosterPriority: new[] { "1fichier", "Rapidgator" },
@@ -76,6 +77,7 @@ public sealed class SettingsService : ISettingsService
         row.SynologyOtpCode = string.IsNullOrWhiteSpace(updated.SynologyOtpCode) ? null : updated.SynologyOtpCode;
         row.SynologyMovieDestination = updated.SynologyMovieDestination ?? "video/movies";
         row.SynologySeriesDestination = updated.SynologySeriesDestination ?? "video/series";
+        row.SynologyAnimeDestination = updated.SynologyAnimeDestination ?? "video/anime";
 
         row.ScanIntervalMinutes = Math.Max(0, updated.ScanIntervalMinutes);
         row.ScanOnStartup = updated.ScanOnStartup;
@@ -139,6 +141,7 @@ public sealed class SettingsService : ISettingsService
             SynologyOtpCode = syn.GetValue<string>("OtpCode"),
             SynologyMovieDestination = syn.GetValue<string>("DefaultMovieDestination") ?? "video/movies",
             SynologySeriesDestination = syn.GetValue<string>("DefaultSeriesDestination") ?? "video/series",
+            SynologyAnimeDestination = syn.GetValue<string>("DefaultAnimeDestination") ?? "video/anime",
             ScanIntervalMinutes = harv.GetValue<int?>("ScanIntervalMinutes") ?? 30,
             ScanOnStartup = harv.GetValue<bool?>("ScanOnStartup") ?? true,
             HosterPriorityCsv = string.Join(',',
@@ -160,6 +163,7 @@ public sealed class SettingsService : ISettingsService
         SynologyOtpCode: row.SynologyOtpCode,
         SynologyMovieDestination: row.SynologyMovieDestination,
         SynologySeriesDestination: row.SynologySeriesDestination,
+        SynologyAnimeDestination: string.IsNullOrEmpty(row.SynologyAnimeDestination) ? "video/anime" : row.SynologyAnimeDestination,
         ScanIntervalMinutes: row.ScanIntervalMinutes,
         ScanOnStartup: row.ScanOnStartup,
         HosterPriority: row.HosterPriorityCsv

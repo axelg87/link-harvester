@@ -1,6 +1,7 @@
 using System.Text.Json;
 using LinkHarvester.Core;
 using LinkHarvester.Persistence;
+using LinkHarvester.Persistence.Catalog;
 using LinkHarvester.Synology;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -15,6 +16,13 @@ namespace LinkHarvester.Worker;
 /// </summary>
 public sealed class SubmissionService
 {
+    /// <summary>
+    /// Ignore repeat <see cref="SendToDsmAsync"/> calls for the same article
+    /// within this window. Catches mobile double-tap and user-retry-after-timeout,
+    /// the two failure modes that caused real-world double-downloads.
+    /// </summary>
+    public static readonly TimeSpan DuplicateSendWindow = TimeSpan.FromMinutes(2);
+
     private readonly IDbContextFactory<HarvesterDbContext> _factory;
     private readonly ILinkResolver _resolver;
     private readonly IDownloadStationClient _dsm;
@@ -101,6 +109,28 @@ public sealed class SubmissionService
 
     public async Task<SubmissionEntity> SendToDsmAsync(int articleId, CancellationToken ct)
     {
+        // Idempotency gate: if this article was just submitted (Sent or
+        // Pending) within the dedupe window, return that row instead of
+        // creating a second one. Defends against mobile double-tap and
+        // user-retry-after-timeout, both observed in production.
+        var since = DateTimeOffset.UtcNow - DuplicateSendWindow;
+        await using (var lookupDb = await _factory.CreateDbContextAsync(ct))
+        {
+            var recent = await lookupDb.Submissions
+                .Where(s => s.ArticleId == articleId
+                            && s.SubmittedAt >= since
+                            && (s.Status == SubmissionStatus.Sent || s.Status == SubmissionStatus.Pending))
+                .OrderByDescending(s => s.Id)
+                .FirstOrDefaultAsync(ct);
+            if (recent is not null)
+            {
+                _log.LogInformation(
+                    "Skipping duplicate send for article {Id}: existing submission {Sub} already {Status}.",
+                    articleId, recent.Id, recent.Status);
+                return recent;
+            }
+        }
+
         var resolved = await ResolveArticleAsync(articleId, ct);
         if (resolved.Count == 0)
         {
@@ -127,9 +157,43 @@ public sealed class SubmissionService
             .Include(a => a.Title)
             .FirstAsync(a => a.Id == articleId, ct);
 
-        var dest = article.Title.Kind == TitleKind.Movie
-            ? _settings.Current.SynologyMovieDestination
-            : _settings.Current.SynologySeriesDestination;
+        // Compute the kind-aware destination. Series and Anime get a
+        // <Root>/<Title>/Season N layout so episodes don't dump flat into
+        // /video/series and mix across shows.
+        var plan = BuildDestination(article.Title, _settings.Current);
+        var dest = plan.FullPath;
+
+        // Make sure every intermediate folder exists before submitting. DSM's
+        // own auto-mkdir is unreliable for nested paths.
+        if (plan.ParentSegments.Count > 0)
+        {
+            try
+            {
+                await _dsm.EnsureFoldersAsync(plan.ParentSegments, ct);
+            }
+            catch (DsmException ex)
+            {
+                _log.LogWarning(ex, "FileStation.CreateFolder failed for article {Id} dest {Dest}", articleId, dest);
+                var folderFailed = new SubmissionEntity
+                {
+                    ArticleId = articleId,
+                    Source = SendSourceKind.ZtArticle,
+                    CatalogTitleId = article.Title.CatalogTitleId,
+                    DisplayTitle = article.Title.DisplayTitle,
+                    Destination = dest,
+                    UrlCount = 0,
+                    SubmittedUrlsJson = "[]",
+                    Status = SubmissionStatus.Failed,
+                    ResponseMessage = $"Could not create destination folder: {ex.HumanMessage}",
+                    DsmErrorCode = ex.Code,
+                    SubmittedAt = DateTimeOffset.UtcNow,
+                    CompletedAt = DateTimeOffset.UtcNow
+                };
+                db.Submissions.Add(folderFailed);
+                await db.SaveChangesAsync(ct);
+                return folderFailed;
+            }
+        }
 
         var urls = resolved.Select(r => r.Url).ToList();
         var submission = new SubmissionEntity
@@ -229,5 +293,20 @@ public sealed class SubmissionService
                 return priority.Any(p => string.Equals(p, h.Hoster, StringComparison.OrdinalIgnoreCase));
             })
             .ToList();
+    }
+
+    private static DsmDestinationBuilder.DestinationPlan BuildDestination(
+        TitleEntity title,
+        AppSettingsSnapshot s)
+    {
+        return title.Kind switch
+        {
+            TitleKind.Movie => DsmDestinationBuilder.ForMovie(s.SynologyMovieDestination),
+            TitleKind.Anime => DsmDestinationBuilder.ForAnime(
+                s.SynologyAnimeDestination, title.DisplayTitle, title.SeasonNumber),
+            TitleKind.Season => DsmDestinationBuilder.ForSeries(
+                s.SynologySeriesDestination, title.DisplayTitle, title.SeasonNumber),
+            _ => DsmDestinationBuilder.ForMovie(s.SynologyMovieDestination),
+        };
     }
 }
