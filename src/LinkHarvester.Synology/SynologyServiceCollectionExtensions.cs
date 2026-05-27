@@ -8,6 +8,7 @@ public static class SynologyServiceCollectionExtensions
     public static IServiceCollection AddHarvesterSynology(this IServiceCollection services)
     {
         services.AddHttpClient(nameof(DownloadStationClient));
+        services.AddHttpClient(nameof(FileStationBenchmarkClient));
         services.AddHttpClient(nameof(QuickConnectResolver), c =>
         {
             c.Timeout = TimeSpan.FromSeconds(20);
@@ -30,6 +31,15 @@ public static class SynologyServiceCollectionExtensions
                 sp.GetRequiredService<ISettingsService>(),
                 sp.GetRequiredService<IQuickConnectEndpointService>(),
                 sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DownloadStationClient>>());
+        });
+        services.AddSingleton<IFileStationBenchmarkClient>(sp =>
+        {
+            var http = sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(FileStationBenchmarkClient));
+            return new FileStationBenchmarkClient(
+                http,
+                sp.GetRequiredService<ISettingsService>(),
+                sp.GetRequiredService<IQuickConnectEndpointService>(),
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<FileStationBenchmarkClient>>());
         });
         return services;
     }
