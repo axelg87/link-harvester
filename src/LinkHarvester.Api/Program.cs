@@ -171,6 +171,7 @@ app.MapCatalogEndpoints();
 app.MapCatalogImportEndpoints();
 app.MapBackfillEndpoints();
 app.MapSendHistoryEndpoints();
+app.MapSynologyDiagnosticsEndpoints();
 
 app.MapFallbackToFile("index.html");
 
