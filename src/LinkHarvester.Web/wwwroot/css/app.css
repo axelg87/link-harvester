@@ -266,6 +266,39 @@ a {
     border-color: rgba(16, 185, 129, 0.35);
 }
 
+.lh-tag-season {
+    background: rgba(168, 85, 247, 0.18);
+    color: #d8b4fe;
+    border-color: rgba(168, 85, 247, 0.4);
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+.lh-inventory .lh-disk-list {
+    list-style: none;
+    padding: 0;
+    margin: 6px 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.lh-inventory .lh-disk-list li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 8px;
+    background: var(--lh-surface-2);
+    border-radius: 4px;
+    font-size: 0.85rem;
+}
+.lh-inventory .lh-disk-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--lh-mono, monospace);
+}
+
 .lh-card-quality {
     display: flex;
     align-items: center;

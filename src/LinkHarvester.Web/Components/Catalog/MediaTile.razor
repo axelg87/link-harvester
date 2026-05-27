@@ -18,7 +18,10 @@
         }
     </div>
     <div class="lh-tile-body">
-        <div class="lh-tile-title">@Title</div>
+        <div class="lh-tile-title">
+            @Title
+            @if (SeasonNumber is int s) { <span class="lh-tag lh-tag-season">Saison @s</span> }
+        </div>
         <div class="lh-tile-meta">
             @if (Year.HasValue) { <span>@Year</span> }
             <span class="lh-tag">@Category</span>
@@ -40,5 +43,6 @@
     [Parameter] public List<string> Genres { get; set; } = new();
     [Parameter] public bool MetadataUncertain { get; set; }
     [Parameter] public string? SourceLabel { get; set; }
+    [Parameter] public int? SeasonNumber { get; set; }
     [Parameter] public EventCallback OnOpen { get; set; }
 }

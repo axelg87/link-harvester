@@ -195,6 +195,77 @@ public sealed class DownloadStationClient : IDownloadStationClient
         finally { _sessionGate.Release(); }
     }
 
+    public async Task<DsmListResult> ListFolderAsync(string folderPath, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(folderPath))
+            throw new ArgumentException("folderPath required", nameof(folderPath));
+
+        var s = _settings.Current;
+        var baseUrl = await _quickConnectEndpoints.EnsureResolvedBaseUrlAsync(forceRefresh: false, ct);
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            throw DsmException.NotConfigured("Base URL");
+        if (string.IsNullOrWhiteSpace(s.SynologyUsername) || string.IsNullOrWhiteSpace(s.SynologyPassword))
+            throw DsmException.NotConfigured("credentials");
+
+        await EnsureSessionAsync(s, baseUrl, ct);
+
+        var normalized = "/" + folderPath.Trim().Trim('/');
+        var endpoint = new Uri(new Uri(baseUrl), "/webapi/entry.cgi");
+        var form = new Dictionary<string, string>
+        {
+            ["api"] = "SYNO.FileStation.List",
+            ["version"] = "2",
+            ["method"] = "list",
+            ["folder_path"] = $"\"{normalized}\"",
+            ["additional"] = "[\"size\",\"time\"]",
+            ["_sid"] = _sid!
+        };
+
+        HttpResponseMessage resp;
+        string body;
+        try
+        {
+            using var content = new FormUrlEncodedContent(form);
+            resp = await _http.PostAsync(endpoint, content, ct);
+            body = await resp.Content.ReadAsStringAsync(ct);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+        {
+            throw DsmException.ForTransport(baseUrl, ex);
+        }
+
+        if (!resp.IsSuccessStatusCode)
+            throw DsmException.ForHttp(resp.StatusCode, baseUrl, body);
+
+        DsmEnvelope<DsmListData>? parsed;
+        try { parsed = JsonSerializer.Deserialize<DsmEnvelope<DsmListData>>(body); }
+        catch (JsonException) { parsed = null; }
+        if (parsed is null)
+            throw DsmException.ForUnparseable(baseUrl, body);
+
+        if (!parsed.Success)
+        {
+            var code = parsed.Error?.Code ?? 0;
+            // 408 = no such file/folder. Surface as Exists=false so the catalog
+            // UI can render "not on disk yet" instead of an error.
+            if (code == 408) return new DsmListResult(Exists: false, FolderPath: normalized, Files: Array.Empty<DsmFileEntry>());
+            if (code is 105 or 119) _sid = null;
+            throw DsmException.ForCode(code, s.SynologyUsername, baseUrl, failedUrl: null);
+        }
+
+        var files = (parsed.Data?.Files ?? new List<DsmListFile>())
+            .Select(f => new DsmFileEntry(
+                Name: f.Name ?? string.Empty,
+                IsDir: f.IsDir,
+                SizeBytes: f.Additional?.Size,
+                ModifiedAt: f.Additional?.Time?.Mtime is long mt
+                    ? DateTimeOffset.FromUnixTimeSeconds(mt)
+                    : null))
+            .ToList();
+
+        return new DsmListResult(Exists: true, FolderPath: normalized, Files: files);
+    }
+
     public async Task EnsureFoldersAsync(IEnumerable<string> folderPaths, CancellationToken ct)
     {
         var paths = folderPaths
@@ -310,4 +381,19 @@ public sealed class DownloadStationClient : IDownloadStationClient
 
     private sealed record DsmTask(
         [property: JsonPropertyName("task_id")] string? TaskId);
+
+    private sealed record DsmListData(
+        [property: JsonPropertyName("files")] List<DsmListFile>? Files);
+
+    private sealed record DsmListFile(
+        [property: JsonPropertyName("name")] string? Name,
+        [property: JsonPropertyName("isdir")] bool IsDir,
+        [property: JsonPropertyName("additional")] DsmListFileExtras? Additional);
+
+    private sealed record DsmListFileExtras(
+        [property: JsonPropertyName("size")] long? Size,
+        [property: JsonPropertyName("time")] DsmListFileTime? Time);
+
+    private sealed record DsmListFileTime(
+        [property: JsonPropertyName("mtime")] long? Mtime);
 }

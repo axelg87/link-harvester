@@ -31,6 +31,43 @@
             <p class="lh-overview">@Title.Overview</p>
         }
 
+        <section class="lh-modal-section lh-inventory">
+            <h3>On disk</h3>
+            @if (InventoryLoading)
+            {
+                <p class="lh-muted">Checking the NAS…</p>
+            }
+            else if (Inventory is null)
+            {
+                <p class="lh-muted">Not checked.</p>
+            }
+            else if (!Inventory.Ok)
+            {
+                <p class="lh-error">Couldn't reach NAS: @Inventory.Error</p>
+            }
+            else if (!Inventory.Exists)
+            {
+                <p class="lh-muted">Not on disk yet (looked in @Inventory.FolderPath).</p>
+            }
+            else if (Inventory.Files.Count == 0)
+            {
+                <p class="lh-muted">Folder exists but no media files: @Inventory.FolderPath</p>
+            }
+            else
+            {
+                <p class="lh-muted">@Inventory.Files.Count file@(Inventory.Files.Count == 1 ? "" : "s") in @Inventory.FolderPath</p>
+                <ul class="lh-disk-list">
+                    @foreach (var f in Inventory.Files)
+                    {
+                        <li>
+                            <span class="lh-disk-name">@f.Name</span>
+                            @if (f.SizeBytes.HasValue) { <span class="lh-muted">@FormatHelpers.FormatSize(f.SizeBytes.Value)</span> }
+                        </li>
+                    }
+                </ul>
+            }
+        </section>
+
         @if ((Title.Links ?? new()).Count > 0)
         {
             <section class="lh-modal-section">
@@ -103,6 +140,8 @@
     [Parameter] public bool Sending { get; set; }
     [Parameter] public bool SendOk { get; set; }
     [Parameter] public string? SendMessage { get; set; }
+    [Parameter] public InventoryResult? Inventory { get; set; }
+    [Parameter] public bool InventoryLoading { get; set; }
     [Parameter] public EventCallback OnClose { get; set; }
     [Parameter] public EventCallback<(int LinkId, bool On)> OnToggleLink { get; set; }
     [Parameter] public EventCallback OnSend { get; set; }

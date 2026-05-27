@@ -103,7 +103,12 @@ public static class CatalogEndpoints
                 {
                     t.Id, t.TitleName, t.OriginalTitle, t.CategoryName, t.TitlePoster,
                     t.LinkCount, t.EpisodeCount,
-                    Meta = t.Metadata
+                    Meta = t.Metadata,
+                    // For series-season cards: if every episode of this title
+                    // belongs to one season, surface it for the tile + the
+                    // inventory lookup. Multi-season aggregates leave it null.
+                    SeasonMin = t.Episodes.Where(e => e.SeasonNumber > 0).Select(e => (int?)e.SeasonNumber).Min(),
+                    SeasonMax = t.Episodes.Where(e => e.SeasonNumber > 0).Select(e => (int?)e.SeasonNumber).Max(),
                 });
 
             if (yearMin.HasValue) joined = joined.Where(x => x.Meta != null && x.Meta.Year >= yearMin);
@@ -149,7 +154,8 @@ public static class CatalogEndpoints
                 Genres: SafeGenres(x.Meta?.GenresJson),
                 OriginalLanguage: x.Meta?.OriginalLanguage,
                 EnrichmentSource: x.Meta?.EnrichmentSource,
-                MetadataUncertain: x.Meta?.MetadataUncertain == true
+                MetadataUncertain: x.Meta?.MetadataUncertain == true,
+                SeasonNumber: x.SeasonMin.HasValue && x.SeasonMin == x.SeasonMax ? x.SeasonMin : null
             )).ToList();
 
             return Results.Ok(new SearchPageDto(totalCount, page, pageSize, dto));
@@ -206,6 +212,79 @@ public static class CatalogEndpoints
                         linksByEpisode.TryGetValue(e.Id, out var episodeLinks) ? episodeLinks : new()))
                     .ToList());
             return Results.Ok(dto);
+        });
+
+        // ── What's on disk for this title ────────────────────────────────────
+        // Per-click DSM lookup: when the user opens a season card, list the
+        // matching season folder and return the file names. Two FileStation
+        // calls in the steady state (title folder → season folder) so the user
+        // sees a 300-600ms shimmer rather than a multi-second scan. No
+        // background reconciler — we only look when asked.
+        grp.MapGet("/titles/{id:int}/inventory", async (
+            int id,
+            HarvesterDbContext db,
+            ISettingsService settings,
+            IDownloadStationClient dsm,
+            CancellationToken ct) =>
+        {
+            var title = await db.CatalogTitles.AsNoTracking()
+                .Include(t => t.Episodes)
+                .FirstOrDefaultAsync(t => t.Id == id, ct);
+            if (title is null) return Results.NotFound();
+
+            var s = settings.Current;
+            // Inventory only makes sense for series/anime where the title has
+            // its own folder. Movies drop into a flat root mixed with other
+            // movies; listing it would return thousands of unrelated files.
+            var isFolderedKind = string.Equals(title.CategoryName, "Animes", StringComparison.OrdinalIgnoreCase)
+                              || string.Equals(title.CategoryName, "Séries", StringComparison.OrdinalIgnoreCase)
+                              || string.Equals(title.CategoryName, "Series", StringComparison.OrdinalIgnoreCase);
+            if (!isFolderedKind)
+            {
+                return Results.Ok(InventoryDto.Missing(string.Empty, null));
+            }
+
+            var season = FirstSeasonNumber(title);
+            var plan = MatchPlan(title, s);
+            // For series/anime, ParentSegments is [titlePath, seasonPath]; the
+            // title-level folder is the next-to-last entry. For miniseries
+            // with no season, there's only the title folder.
+            var titlePath = plan.ParentSegments.Count >= 2
+                ? plan.ParentSegments[^2]
+                : (plan.ParentSegments.Count == 1 ? plan.ParentSegments[0] : plan.FullPath);
+
+            try
+            {
+                if (season is int n && n > 0)
+                {
+                    var titleListed = await dsm.ListFolderAsync(titlePath, ct);
+                    if (!titleListed.Exists)
+                    {
+                        return Results.Ok(InventoryDto.Missing(titlePath, season));
+                    }
+                    var seasonDir = titleListed.Files
+                        .FirstOrDefault(f => f.IsDir && MatchesSeasonFolder(f.Name, n));
+                    if (seasonDir is null)
+                    {
+                        return Results.Ok(InventoryDto.Missing($"{titlePath}/<Season {n}>", season));
+                    }
+                    var seasonListed = await dsm.ListFolderAsync($"{titlePath}/{seasonDir.Name}", ct);
+                    return Results.Ok(InventoryDto.From(seasonListed, season));
+                }
+                else
+                {
+                    // No clear season → just walk the title folder (movies, or
+                    // multi-season series we can't disambiguate).
+                    var listed = await dsm.ListFolderAsync(titlePath, ct);
+                    return Results.Ok(InventoryDto.From(listed, season));
+                }
+            }
+            catch (DsmException ex)
+            {
+                return Results.Ok(new InventoryDto(
+                    Ok: false, Error: ex.HumanMessage, Exists: false,
+                    FolderPath: titlePath, SeasonNumber: season, Files: new()));
+            }
         });
 
         // ── Facets (filter chip counts) ──────────────────────────────────────
@@ -476,7 +555,8 @@ public static class CatalogEndpoints
         int Id, string Title, string? OriginalTitle, string Category, string? Poster,
         int LinkCount, int EpisodeCount,
         int? Year, double? Rating, int? Runtime, string? Overview,
-        List<string> Genres, string? OriginalLanguage, string? EnrichmentSource, bool MetadataUncertain);
+        List<string> Genres, string? OriginalLanguage, string? EnrichmentSource, bool MetadataUncertain,
+        int? SeasonNumber);
 
     public sealed record SearchPageDto(int Total, int Page, int PageSize, List<SearchHitDto> Items);
 
@@ -503,6 +583,54 @@ public static class CatalogEndpoints
 
     public sealed record SendLinksReq(List<int> LinkIds);
     public sealed record SendResultDto(bool Ok, string? Error, List<string> TaskIds, int Submitted);
+
+    public sealed record InventoryFileDto(string Name, long? SizeBytes, DateTimeOffset? ModifiedAt);
+
+    public sealed record InventoryDto(
+        bool Ok, string? Error, bool Exists, string FolderPath, int? SeasonNumber,
+        List<InventoryFileDto> Files)
+    {
+        public static InventoryDto Missing(string path, int? season) =>
+            new(Ok: true, Error: null, Exists: false, FolderPath: path, SeasonNumber: season, Files: new());
+
+        public static InventoryDto From(DsmListResult listed, int? season)
+        {
+            if (!listed.Exists)
+                return Missing(listed.FolderPath, season);
+            var files = listed.Files
+                .Where(f => !f.IsDir && !f.Name.StartsWith('.'))
+                .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(f => new InventoryFileDto(f.Name, f.SizeBytes, f.ModifiedAt))
+                .ToList();
+            return new InventoryDto(
+                Ok: true, Error: null, Exists: true,
+                FolderPath: listed.FolderPath, SeasonNumber: season, Files: files);
+        }
+    }
+
+    // Matches "Season 1", "Season 01", "Saison 1", "Saison 01", "S1", "S01",
+    // or a folder name that's just the season number — covers the user's
+    // existing French folders and the canonical English ones the destination
+    // builder produces.
+    private static bool MatchesSeasonFolder(string folderName, int seasonNumber)
+    {
+        if (string.IsNullOrWhiteSpace(folderName)) return false;
+        var name = folderName.Trim();
+        var n = seasonNumber.ToString();
+        var padded = seasonNumber.ToString("D2");
+        ReadOnlySpan<string> prefixes = new[] { "Season ", "Saison ", "S" };
+        foreach (var p in prefixes)
+        {
+            if (name.StartsWith(p, StringComparison.OrdinalIgnoreCase))
+            {
+                var rest = name[p.Length..].TrimStart('0');
+                if (rest.Length == 0) rest = "0";
+                if (rest == n) return true;
+            }
+        }
+        // Bare number: "1", "01"
+        return name == n || name == padded;
+    }
 
     private static string BuildCatalogDestination(
         List<CatalogLinkEntity> links,

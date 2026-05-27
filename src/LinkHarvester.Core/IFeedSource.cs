@@ -83,7 +83,20 @@ public interface IDownloadStationClient
     /// folders are left alone.
     /// </summary>
     Task EnsureFoldersAsync(IEnumerable<string> folderPaths, CancellationToken ct);
+
+    /// <summary>
+    /// List immediate children of <paramref name="folderPath"/> via
+    /// SYNO.FileStation.List. Path must start with a leading slash (DSM API
+    /// requirement). Returns <see cref="DsmListResult.Exists"/>=false when DSM
+    /// reports the folder is missing (error code 408); any other failure
+    /// surfaces as <see cref="DsmException"/>.
+    /// </summary>
+    Task<DsmListResult> ListFolderAsync(string folderPath, CancellationToken ct);
 }
+
+public sealed record DsmListResult(bool Exists, string FolderPath, IReadOnlyList<DsmFileEntry> Files);
+
+public sealed record DsmFileEntry(string Name, bool IsDir, long? SizeBytes, DateTimeOffset? ModifiedAt);
 
 public interface IQualityScorer
 {

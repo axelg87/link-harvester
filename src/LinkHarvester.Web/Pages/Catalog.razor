@@ -79,6 +79,7 @@
                             Rating="@hit.Rating"
                             Genres="@(hit.Genres ?? new())"
                             MetadataUncertain="@hit.MetadataUncertain"
+                            SeasonNumber="@hit.SeasonNumber"
                             OnOpen="@(() => OpenTitle(hit.Id))" />
                     }
                 </div>
@@ -101,6 +102,8 @@
         Sending="_sending"
         SendOk="_sendOk"
         SendMessage="_sendMessage"
+        Inventory="_inventory"
+        InventoryLoading="_inventoryLoading"
         OnClose="CloseTitle"
         OnToggleLink="@(args => ToggleLink(args.LinkId, args.On))"
         OnSend="SendSelected" />
@@ -122,6 +125,9 @@
     private bool _sending;
     private bool _sendOk;
     private string? _sendMessage;
+    private InventoryResult? _inventory;
+    private bool _inventoryLoading;
+    private CancellationTokenSource? _inventoryCts;
     // Separate from _sendMessage so a transient search error doesn't appear
     // inside the open title-detail modal where it makes no sense.
     private string? _searchError;
@@ -216,6 +222,7 @@
             var title = await Api.GetTitleAsync(id);
             _selectedLinkIds = new HashSet<int>();
             _sendMessage = null;
+            _inventory = null;
             if (title is null) return;
             _selectedTitle = title;
 
@@ -227,6 +234,8 @@
                 .ThenByDescending(l => l.SizeBytes ?? 0)
                 .FirstOrDefault();
             if (best is not null) _selectedLinkIds.Add(best.Id);
+
+            _ = LoadInventoryAsync(id);
         }
         catch (Exception ex)
         {
@@ -234,7 +243,42 @@
         }
     }
 
-    private void CloseTitle() => _selectedTitle = null;
+    private async Task LoadInventoryAsync(int id)
+    {
+        _inventoryCts?.Cancel();
+        _inventoryCts = new CancellationTokenSource();
+        var ct = _inventoryCts.Token;
+        _inventoryLoading = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var result = await Api.GetTitleInventoryAsync(id, ct);
+            if (ct.IsCancellationRequested) return;
+            _inventory = result;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _inventory = new InventoryResult(
+                Ok: false, Error: ex.Message, Exists: false,
+                FolderPath: string.Empty, SeasonNumber: null, Files: new());
+        }
+        finally
+        {
+            if (!ct.IsCancellationRequested)
+            {
+                _inventoryLoading = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+    }
+
+    private void CloseTitle()
+    {
+        _inventoryCts?.Cancel();
+        _selectedTitle = null;
+        _inventory = null;
+        _inventoryLoading = false;
+    }
 
     private void ToggleLink(int id, bool on)
     {
