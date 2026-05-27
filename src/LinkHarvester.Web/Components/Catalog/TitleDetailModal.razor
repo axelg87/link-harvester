@@ -97,8 +97,12 @@
 
         @foreach (var ep in Title.Episodes ?? new())
         {
-            <section class="lh-modal-section">
-                <h3>@FormatEpisodeHeader(ep)</h3>
+            var owned = IsEpisodeOwned(ep);
+            <section class="lh-modal-section @(owned ? "lh-section-owned" : "")">
+                <h3>
+                    @FormatEpisodeHeader(ep)
+                    @if (owned) { <span class="lh-tag lh-tag-owned">✓ on disk</span> }
+                </h3>
                 <ul class="lh-link-list">
                     @foreach (var l in ep.Links ?? new())
                     {
@@ -142,11 +146,17 @@
     [Parameter] public string? SendMessage { get; set; }
     [Parameter] public InventoryResult? Inventory { get; set; }
     [Parameter] public bool InventoryLoading { get; set; }
+    [Parameter] public HashSet<(int s, int e)> OwnedEpisodes { get; set; } = new();
     [Parameter] public EventCallback OnClose { get; set; }
     [Parameter] public EventCallback<(int LinkId, bool On)> OnToggleLink { get; set; }
     [Parameter] public EventCallback OnSend { get; set; }
 
     private Task InvokeToggle(int linkId, bool on) => OnToggleLink.InvokeAsync((linkId, on));
+
+    private bool IsEpisodeOwned(CatalogEpisode ep) =>
+        ep.IsFullSeason
+            ? OwnedEpisodes.Any(o => o.s == ep.SeasonNumber)
+            : OwnedEpisodes.Contains((ep.SeasonNumber, ep.EpisodeNumber));
 
     private static bool IsZt(CatalogLink link) =>
         string.Equals(link.Source, "zt", StringComparison.OrdinalIgnoreCase);
