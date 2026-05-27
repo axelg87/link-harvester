@@ -8,10 +8,8 @@
     Page-level coordination only:
       - First-load: fetch /stats, /facets, /genres, then run a default search.
       - Search debounce + pagination.
-      - Modal lifecycle (open/close + best-link preselect).
-      - Send-to-NAS hand-off.
-    The filter sidebar and the title-detail modal each have their own
-    components under Web/Components/Catalog/.
+      - Hand-off to MediaGrid for tiles + multi-select + bulk send.
+      - Hand-off to TitleModalHost for the detail modal.
 *@
 
 <div class="lh-catalog">
@@ -54,6 +52,10 @@
             {
                 <p class="lh-error">@_titleError</p>
             }
+            @if (!string.IsNullOrEmpty(_bulkMessage))
+            {
+                <p class="@(_bulkOk ? "lh-muted" : "lh-error")">@_bulkMessage</p>
+            }
 
             @if (_searching)
             {
@@ -68,9 +70,15 @@
             }
             else
             {
-                <div class="lh-grid">
-                    @foreach (var hit in _page.Items)
-                    {
+                <MediaGrid TItem="SearchHit"
+                           @ref="_grid"
+                           Items="_page.Items"
+                           ItemId="(h => h.Id)"
+                           Sending="_bulkSending"
+                           OnItemClick="OpenTitle"
+                           OnSelectionAdded="PrefetchForSelection"
+                           OnBulkSend="DoBulkSend">
+                    <ItemTemplate Context="hit">
                         <MediaTile
                             Title="@hit.Title"
                             Poster="@hit.Poster"
@@ -79,10 +87,9 @@
                             Rating="@hit.Rating"
                             Genres="@(hit.Genres ?? new())"
                             MetadataUncertain="@hit.MetadataUncertain"
-                            SeasonNumber="@hit.SeasonNumber"
-                            OnOpen="@(() => OpenTitle(hit.Id))" />
-                    }
-                </div>
+                            SeasonNumber="@hit.SeasonNumber" />
+                    </ItemTemplate>
+                </MediaGrid>
 
                 <div class="lh-pager">
                     <button class="lh-secondary" @onclick="PrevPage" disabled="@(_query.Page <= 1)">← Prev</button>
@@ -94,21 +101,7 @@
     </div>
 </div>
 
-@if (_selectedTitle is not null)
-{
-    <TitleDetailModal
-        Title="_selectedTitle"
-        SelectedLinkIds="_selectedLinkIds"
-        Sending="_sending"
-        SendOk="_sendOk"
-        SendMessage="_sendMessage"
-        Inventory="_inventory"
-        InventoryLoading="_inventoryLoading"
-        OwnedEpisodes="_ownedEpisodes"
-        OnClose="CloseTitle"
-        OnToggleLink="@(args => ToggleLink(args.LinkId, args.On))"
-        OnSend="SendSelected" />
-}
+<TitleModalHost @ref="_modal" />
 
 @code {
     private CatalogStats? _stats;
@@ -121,19 +114,14 @@
     private bool _searching;
     private CancellationTokenSource? _debounce;
 
-    private TitleDetail? _selectedTitle;
-    private HashSet<int> _selectedLinkIds = new();
-    private bool _sending;
-    private bool _sendOk;
-    private string? _sendMessage;
-    private InventoryResult? _inventory;
-    private bool _inventoryLoading;
-    private CancellationTokenSource? _inventoryCts;
-    private HashSet<(int s, int e)> _ownedEpisodes = new();
-    // Separate from _sendMessage so a transient search error doesn't appear
-    // inside the open title-detail modal where it makes no sense.
+    private TitleModalHost _modal = default!;
+    private MediaGrid<SearchHit> _grid = default!;
     private string? _searchError;
     private string? _titleError;
+
+    private bool _bulkSending;
+    private string? _bulkMessage;
+    private bool _bulkOk;
 
     private int TotalPages => _page is null || _page.PageSize == 0 ? 1 : Math.Max(1, (int)Math.Ceiling(_page.Total / (double)_page.PageSize));
 
@@ -170,8 +158,6 @@
 
     private Task ScheduleSearch()
     {
-        // Cancel the previous pending debounce so rapid filter changes only
-        // run the latest one. Capture a new CTS that we own for this call.
         _debounce?.Cancel();
         _debounce = new CancellationTokenSource();
         var token = _debounce.Token;
@@ -181,14 +167,11 @@
             {
                 await Task.Delay(250, token);
                 _query.Page = 1;
-                // Refresh size-derived query fields before searching. The
-                // CatalogFilters component already pushed _sizeMin/MaxGb back
-                // to us via callbacks; we convert here.
                 _query.SizeMinBytes = _sizeMinGb.HasValue ? (long)(_sizeMinGb.Value * 1024 * 1024 * 1024) : null;
                 _query.SizeMaxBytes = _sizeMaxGb.HasValue ? (long)(_sizeMaxGb.Value * 1024 * 1024 * 1024) : null;
                 await DoSearch();
             }
-            catch (TaskCanceledException) { /* superseded by a newer search */ }
+            catch (TaskCanceledException) { }
         });
     }
 
@@ -219,170 +202,116 @@
     private async Task OpenTitle(int id)
     {
         _titleError = null;
+        try { await _modal.OpenAsync(id); }
+        catch (Exception ex) { _titleError = "Could not open title: " + ex.Message; }
+    }
+
+    // Each newly-selected tile pre-warms its title+inventory in the modal host
+    // so when the user hits "Send N" we already have what we need.
+    private async Task PrefetchForSelection(IReadOnlyCollection<int> newIds)
+    {
+        foreach (var id in newIds)
+            await _modal.PrefetchInventoryAsync(id);
+    }
+
+    private async Task DoBulkSend(IReadOnlyCollection<int> ids)
+    {
+        if (ids.Count == 0) return;
+        _bulkSending = true;
+        _bulkMessage = null;
+        StateHasChanged();
         try
         {
-            var title = await Api.GetTitleAsync(id);
-            _selectedLinkIds = new HashSet<int>();
-            _sendMessage = null;
-            _inventory = null;
-            _ownedEpisodes = new();
-            if (title is null) return;
-            _selectedTitle = title;
+            // Wait for any inflight prefetches; resolve title+inventory per id.
+            var jobs = ids.Select(async id =>
+            {
+                var titleTask = _modal.TitleCache.TryGetValue(id, out var t) ? t : null;
+                var invTask = _modal.InventoryCache.TryGetValue(id, out var i) ? i : null;
+                if (titleTask is null || invTask is null)
+                {
+                    await _modal.PrefetchInventoryAsync(id);
+                    titleTask = _modal.TitleCache[id];
+                    invTask = _modal.InventoryCache[id];
+                }
+                var title = await titleTask;
+                InventoryResult? inv = null;
+                try { inv = await invTask; }
+                catch { /* treat as no-inventory */ }
+                return (id, title, inv);
+            }).ToList();
+            var resolved = await Task.WhenAll(jobs);
 
-            ApplyInitialSelection(title);
+            var linkIds = new HashSet<int>();
+            var skippedAllOwned = 0;
+            var skippedNoData = 0;
+            foreach (var (id, title, inv) in resolved)
+            {
+                if (title is null) { skippedNoData++; continue; }
+                var owned = TitleModalHost.ParseOwnedEpisodes(inv);
+                var ids2 = ResolveMissingLinkIds(title, owned);
+                if (ids2.Count == 0) { skippedAllOwned++; continue; }
+                foreach (var lid in ids2) linkIds.Add(lid);
+            }
+            if (linkIds.Count == 0)
+            {
+                _bulkOk = true;
+                _bulkMessage = skippedAllOwned > 0
+                    ? $"Nothing to send: {skippedAllOwned} title(s) already complete on disk."
+                    : "Nothing to send.";
+                return;
+            }
 
-            _ = LoadInventoryAsync(id);
+            var res = await Api.SendCatalogLinksAsync(linkIds);
+            _bulkOk = res.Ok;
+            _bulkMessage = res.Ok
+                ? $"Sent {res.Submitted} link(s) across {resolved.Length - skippedAllOwned - skippedNoData} title(s). "
+                    + (skippedAllOwned > 0 ? $"Skipped {skippedAllOwned} already-complete title(s)." : "")
+                : (res.Error ?? "Send failed.");
+            if (res.Ok)
+            {
+                _modal.ClearInventoryCache();
+                _grid.Reset();
+            }
         }
         catch (Exception ex)
         {
-            _titleError = "Could not open title: " + ex.Message;
+            _bulkOk = false;
+            _bulkMessage = ex.Message;
+        }
+        finally
+        {
+            _bulkSending = false;
+            StateHasChanged();
         }
     }
 
-    // Initial pre-selection (before inventory): one best link per episode,
-    // or the single best title-level link for movies/no-episode titles.
-    private void ApplyInitialSelection(TitleDetail title)
+    private static List<int> ResolveMissingLinkIds(TitleDetail title, HashSet<(int s, int e)> owned)
     {
-        _selectedLinkIds.Clear();
+        var ids = new List<int>();
         var episodes = title.Episodes ?? new();
         if (episodes.Count > 0)
         {
             foreach (var ep in episodes)
             {
-                var bestForEp = (ep.Links ?? new())
-                    .OrderBy(l => HostRank(l.Host))
+                var isOwned = ep.IsFullSeason
+                    ? owned.Any(o => o.s == ep.SeasonNumber)
+                    : owned.Contains((ep.SeasonNumber, ep.EpisodeNumber));
+                if (isOwned) continue;
+                var best = (ep.Links ?? new())
+                    .OrderBy(l => TitleModalHost.HostRank(l.Host))
                     .ThenByDescending(l => l.SizeBytes ?? 0)
                     .FirstOrDefault();
-                if (bestForEp is not null) _selectedLinkIds.Add(bestForEp.Id);
+                if (best is not null) ids.Add(best.Id);
             }
         }
         else
         {
-            var bestTitle = (title.Links ?? new())
-                .OrderBy(l => HostRank(l.Host))
+            var best = (title.Links ?? new())
+                .OrderBy(l => TitleModalHost.HostRank(l.Host))
                 .ThenByDescending(l => l.SizeBytes ?? 0)
                 .FirstOrDefault();
-            if (bestTitle is not null) _selectedLinkIds.Add(bestTitle.Id);
+            if (best is not null) ids.Add(best.Id);
         }
-    }
-
-    // After inventory lands, drop the pre-selected link of any episode whose
-    // file is already on disk. We don't touch the user's manual toggles
-    // beyond this — race is rare since inventory completes in ~600ms.
-    private void RefineSelectionWithOwned(TitleDetail title, InventoryResult inv)
-    {
-        var owned = ParseOwnedEpisodes(inv);
-        _ownedEpisodes = owned;
-        if (owned.Count == 0) return;
-
-        foreach (var ep in title.Episodes ?? new())
-        {
-            var isOwned = ep.IsFullSeason
-                ? owned.Any(o => o.s == ep.SeasonNumber)
-                : owned.Contains((ep.SeasonNumber, ep.EpisodeNumber));
-            if (!isOwned) continue;
-            foreach (var l in ep.Links ?? new())
-                _selectedLinkIds.Remove(l.Id);
-        }
-    }
-
-    // SxxExx is the dominant scene-release pattern; 1x03 covers older
-    // anime/TV scrapes. Falls back silently for files that don't match —
-    // those just won't count as "owned" for any specific episode.
-    private static readonly System.Text.RegularExpressions.Regex EpisodeRx =
-        new(@"(?:S(\d{1,2})E(\d{1,2})|\b(\d{1,2})x(\d{1,2})\b)",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase
-            | System.Text.RegularExpressions.RegexOptions.Compiled);
-
-    private static HashSet<(int s, int e)> ParseOwnedEpisodes(InventoryResult? inv)
-    {
-        var set = new HashSet<(int, int)>();
-        if (inv is null || !inv.Exists) return set;
-        foreach (var f in inv.Files)
-        {
-            var m = EpisodeRx.Match(f.Name);
-            if (!m.Success) continue;
-            var sg = m.Groups[1].Success ? m.Groups[1] : m.Groups[3];
-            var eg = m.Groups[2].Success ? m.Groups[2] : m.Groups[4];
-            if (int.TryParse(sg.Value, out var s) && int.TryParse(eg.Value, out var e))
-                set.Add((s, e));
-        }
-        return set;
-    }
-
-    private async Task LoadInventoryAsync(int id)
-    {
-        _inventoryCts?.Cancel();
-        _inventoryCts = new CancellationTokenSource();
-        var ct = _inventoryCts.Token;
-        _inventoryLoading = true;
-        await InvokeAsync(StateHasChanged);
-        try
-        {
-            var result = await Api.GetTitleInventoryAsync(id, ct);
-            if (ct.IsCancellationRequested) return;
-            _inventory = result;
-            if (result is { Ok: true, Exists: true } && _selectedTitle is not null)
-                RefineSelectionWithOwned(_selectedTitle, result);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _inventory = new InventoryResult(
-                Ok: false, Error: ex.Message, Exists: false,
-                FolderPath: string.Empty, SeasonNumber: null, Files: new());
-        }
-        finally
-        {
-            if (!ct.IsCancellationRequested)
-            {
-                _inventoryLoading = false;
-                await InvokeAsync(StateHasChanged);
-            }
-        }
-    }
-
-    private void CloseTitle()
-    {
-        _inventoryCts?.Cancel();
-        _selectedTitle = null;
-        _inventory = null;
-        _inventoryLoading = false;
-        _ownedEpisodes = new();
-    }
-
-    private void ToggleLink(int id, bool on)
-    {
-        if (on) _selectedLinkIds.Add(id); else _selectedLinkIds.Remove(id);
-    }
-
-    private async Task SendSelected()
-    {
-        if (_selectedLinkIds.Count == 0) return;
-        _sending = true;
-        _sendMessage = null;
-        try
-        {
-            var res = await Api.SendCatalogLinksAsync(_selectedLinkIds);
-            _sendOk = res.Ok;
-            _sendMessage = res.Ok
-                ? $"Sent {res.Submitted} link(s) to DSM ({res.TaskIds.Count} task(s) created)."
-                : (res.Error ?? "Send failed.");
-        }
-        catch (Exception ex) { _sendOk = false; _sendMessage = ex.Message; }
-        finally { _sending = false; }
-    }
-
-    // Hoster pre-select ordering. Hardcoded for now; the audit flagged that
-    // this should read user-configured HosterPriority instead, but plumbing
-    // settings through the catalog page is a separate change.
-    private static int HostRank(string? host)
-    {
-        if (string.IsNullOrWhiteSpace(host)) return 9;
-        var h = host.ToLowerInvariant();
-        if (h.Contains("1fichier")) return 0;
-        if (h.Contains("rapidgator")) return 1;
-        if (h.Contains("uploady")) return 2;
-        if (h.Contains("nitroflare")) return 3;
-        return 9;
+        return ids;
     }
 }

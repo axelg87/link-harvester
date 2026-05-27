@@ -20,9 +20,20 @@
     }
     else
     {
-        <div class="lh-grid">
-            @foreach (var card in _cards)
-            {
+        @if (!string.IsNullOrEmpty(_bulkMessage))
+        {
+            <p class="@(_bulkOk ? "lh-muted" : "lh-error")">@_bulkMessage</p>
+        }
+        <MediaGrid TItem="InboxCard"
+                   @ref="_grid"
+                   Items="_cards"
+                   ItemId="(c => c.CatalogTitleId ?? c.TitleId)"
+                   IsSelectable="(c => c.CatalogTitleId.HasValue)"
+                   Sending="_bulkSending"
+                   OnItemClick="HandleTileClick"
+                   OnSelectionAdded="PrefetchForSelection"
+                   OnBulkSend="DoBulkSend">
+            <ItemTemplate Context="card">
                 <MediaTile
                     Title="@card.DisplayTitle"
                     Poster="@card.Poster"
@@ -31,10 +42,9 @@
                     Rating="@card.Rating"
                     Genres="@(card.Genres ?? new())"
                     MetadataUncertain="@card.MetadataUncertain"
-                    SourceLabel="ZT"
-                    OnOpen="@(() => OpenCatalogTitle(card))" />
-            }
-        </div>
+                    SourceLabel="ZT" />
+            </ItemTemplate>
+        </MediaGrid>
         @foreach (var msg in _messages.Values)
         {
             <p class="lh-action-msg">@msg</p>
@@ -42,28 +52,18 @@
     }
 </div>
 
-@if (_selectedTitle is not null)
-{
-    <TitleDetailModal
-        Title="_selectedTitle"
-        SelectedLinkIds="_selectedLinkIds"
-        Sending="_sending"
-        SendOk="_sendOk"
-        SendMessage="_sendMessage"
-        OnClose="CloseTitle"
-        OnToggleLink="@(args => ToggleLink(args.LinkId, args.On))"
-        OnSend="SendSelected" />
-}
+<TitleModalHost @ref="_modal" OnSendComplete="Refresh" />
 
 @code {
     private List<InboxCard> _cards = new();
     private bool _loading = true;
     private readonly Dictionary<int, string> _messages = new();
-    private TitleDetail? _selectedTitle;
-    private HashSet<int> _selectedLinkIds = new();
-    private bool _sending;
-    private bool _sendOk;
-    private string? _sendMessage;
+
+    private TitleModalHost _modal = default!;
+    private MediaGrid<InboxCard> _grid = default!;
+    private bool _bulkSending;
+    private string? _bulkMessage;
+    private bool _bulkOk;
 
     protected override async Task OnInitializedAsync() => await Refresh();
 
@@ -90,66 +90,117 @@
         _ => c.Kind
     };
 
-    private async Task OpenCatalogTitle(InboxCard card)
+    private async Task HandleTileClick(int catalogTitleId)
     {
-        if (card.CatalogTitleId is not int catalogTitleId)
+        // The MediaGrid item id is `card.CatalogTitleId ?? card.TitleId`; if
+        // the card hasn't been promoted yet, IsSelectable returns false but a
+        // tap still flows through here. Surface the message inline rather than
+        // opening an empty modal.
+        var card = _cards.FirstOrDefault(c => (c.CatalogTitleId ?? c.TitleId) == catalogTitleId);
+        if (card is null) return;
+        if (card.CatalogTitleId is null)
         {
             _messages[card.TitleId] = "This item is still being prepared for the catalog.";
             return;
         }
+        try { await _modal.OpenAsync(card.CatalogTitleId.Value); }
+        catch (Exception ex) { _messages[card.TitleId] = "Could not open item: " + ex.Message; }
+    }
 
+    private async Task PrefetchForSelection(IReadOnlyCollection<int> newIds)
+    {
+        foreach (var id in newIds)
+            await _modal.PrefetchInventoryAsync(id);
+    }
+
+    private async Task DoBulkSend(IReadOnlyCollection<int> ids)
+    {
+        if (ids.Count == 0) return;
+        _bulkSending = true;
+        _bulkMessage = null;
+        StateHasChanged();
         try
         {
-            var title = await Api.GetTitleAsync(catalogTitleId);
-            if (title is null) return;
-            _selectedTitle = title;
-            _selectedLinkIds = new HashSet<int>();
-            var best = (title.Links ?? new())
-                .Concat((title.Episodes ?? new()).SelectMany(e => e.Links ?? new()))
-                .OrderBy(l => HostRank(l.Host))
-                .ThenByDescending(l => l.SizeBytes ?? 0)
-                .FirstOrDefault();
-            if (best is not null) _selectedLinkIds.Add(best.Id);
+            var jobs = ids.Select(async id =>
+            {
+                if (!_modal.TitleCache.ContainsKey(id) || !_modal.InventoryCache.ContainsKey(id))
+                    await _modal.PrefetchInventoryAsync(id);
+                var title = await _modal.TitleCache[id];
+                InventoryResult? inv = null;
+                try { inv = await _modal.InventoryCache[id]; } catch { }
+                return (id, title, inv);
+            }).ToList();
+            var resolved = await Task.WhenAll(jobs);
+
+            var linkIds = new HashSet<int>();
+            var skippedAllOwned = 0;
+            foreach (var (id, title, inv) in resolved)
+            {
+                if (title is null) continue;
+                var owned = TitleModalHost.ParseOwnedEpisodes(inv);
+                var ids2 = ResolveMissingLinkIds(title, owned);
+                if (ids2.Count == 0) { skippedAllOwned++; continue; }
+                foreach (var lid in ids2) linkIds.Add(lid);
+            }
+            if (linkIds.Count == 0)
+            {
+                _bulkOk = true;
+                _bulkMessage = "Nothing to send (all items already on disk).";
+                return;
+            }
+
+            var res = await Api.SendCatalogLinksAsync(linkIds);
+            _bulkOk = res.Ok;
+            _bulkMessage = res.Ok
+                ? $"Sent {res.Submitted} link(s)."
+                    + (skippedAllOwned > 0 ? $" Skipped {skippedAllOwned} already-complete title(s)." : "")
+                : (res.Error ?? "Send failed.");
+            if (res.Ok)
+            {
+                _modal.ClearInventoryCache();
+                _grid.Reset();
+                await Refresh();
+            }
         }
         catch (Exception ex)
         {
-            _messages[card.TitleId] = "Could not open item: " + ex.Message;
+            _bulkOk = false;
+            _bulkMessage = ex.Message;
         }
-    }
-
-    private void CloseTitle() => _selectedTitle = null;
-
-    private void ToggleLink(int id, bool on)
-    {
-        if (on) _selectedLinkIds.Add(id); else _selectedLinkIds.Remove(id);
-    }
-
-    private async Task SendSelected()
-    {
-        if (_selectedLinkIds.Count == 0) return;
-        _sending = true;
-        _sendMessage = null;
-        try
+        finally
         {
-            var res = await Api.SendCatalogLinksAsync(_selectedLinkIds);
-            _sendOk = res.Ok;
-            _sendMessage = res.Ok
-                ? $"Sent {res.Submitted} link(s) to DSM ({res.TaskIds.Count} task(s) created)."
-                : (res.Error ?? "Send failed.");
-            await Refresh();
+            _bulkSending = false;
+            StateHasChanged();
         }
-        catch (Exception ex) { _sendOk = false; _sendMessage = ex.Message; }
-        finally { _sending = false; }
     }
 
-    private static int HostRank(string? host)
+    private static List<int> ResolveMissingLinkIds(TitleDetail title, HashSet<(int s, int e)> owned)
     {
-        if (string.IsNullOrWhiteSpace(host)) return 9;
-        var h = host.ToLowerInvariant();
-        if (h.Contains("1fichier")) return 0;
-        if (h.Contains("rapidgator")) return 1;
-        if (h.Contains("uploady")) return 2;
-        if (h.Contains("nitroflare")) return 3;
-        return 9;
+        var ids = new List<int>();
+        var episodes = title.Episodes ?? new();
+        if (episodes.Count > 0)
+        {
+            foreach (var ep in episodes)
+            {
+                var isOwned = ep.IsFullSeason
+                    ? owned.Any(o => o.s == ep.SeasonNumber)
+                    : owned.Contains((ep.SeasonNumber, ep.EpisodeNumber));
+                if (isOwned) continue;
+                var best = (ep.Links ?? new())
+                    .OrderBy(l => TitleModalHost.HostRank(l.Host))
+                    .ThenByDescending(l => l.SizeBytes ?? 0)
+                    .FirstOrDefault();
+                if (best is not null) ids.Add(best.Id);
+            }
+        }
+        else
+        {
+            var best = (title.Links ?? new())
+                .OrderBy(l => TitleModalHost.HostRank(l.Host))
+                .ThenByDescending(l => l.SizeBytes ?? 0)
+                .FirstOrDefault();
+            if (best is not null) ids.Add(best.Id);
+        }
+        return ids;
     }
 }

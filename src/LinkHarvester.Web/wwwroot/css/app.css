@@ -559,8 +559,74 @@ input[type=checkbox] {
 
 .lh-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 12px;
+    /* Phone-first: 2 columns. Tablet bumps to 3. Desktop fills naturally. */
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+@media (min-width: 600px) {
+    .lh-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+}
+@media (min-width: 900px) {
+    .lh-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+}
+
+/* ── MediaGrid (shared by /catalog and /) ───────────────────── */
+.lh-mediagrid { display: flex; flex-direction: column; gap: 10px; }
+/* Fixed bottom toolbar so it stays visible even when scrolled deep into a
+   long catalog page. iOS-style multi-select. Padding-bottom on the grid
+   below leaves room for the bar so the last row isn't covered. */
+.lh-mediagrid-bar {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    background: var(--lh-surface-2);
+    border: 1px solid var(--lh-border);
+    border-radius: 14px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    /* Honour iOS safe-area at the bottom. */
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+}
+.lh-mediagrid:has(.lh-mediagrid-bar) .lh-grid { padding-bottom: 84px; }
+.lh-mediagrid-count {
+    font-weight: 600;
+    font-size: 0.9rem;
+    flex-shrink: 0;
+}
+.lh-mediagrid-btn { min-height: 44px; padding: 8px 14px; font-size: 0.9rem; }
+.lh-mediagrid-bar .lh-primary { flex: 1; }
+
+.lh-grid-cell {
+    position: relative;
+    border-radius: 12px;
+    transition: transform 0.05s, box-shadow 0.1s;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
+}
+.lh-grid-cell-selected {
+    outline: 3px solid var(--lh-primary);
+    outline-offset: -1px;
+    transform: scale(0.97);
+}
+.lh-grid-cell-selected .lh-tile { opacity: 0.85; }
+.lh-grid-cell-disabled .lh-tile { opacity: 0.5; }
+.lh-grid-cell-check {
+    position: absolute;
+    top: 8px; left: 8px;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: var(--lh-primary);
+    color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700;
+    z-index: 2;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
 }
 .lh-tile {
     background: var(--lh-surface);
@@ -702,58 +768,105 @@ input[type=checkbox] {
     border-radius: 14px;
     max-width: 720px;
     width: 100%;
-    padding: 18px 18px 14px;
+    padding: 0 16px 16px;
     position: relative;
     box-shadow: 0 12px 48px rgba(0,0,0,0.5);
 }
+.lh-modal-actionbar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 0 10px;
+    margin: 0 -16px 8px;
+    padding-left: 16px;
+    padding-right: 12px;
+    background: var(--lh-surface);
+    border-bottom: 1px solid var(--lh-border);
+    border-radius: 14px 14px 0 0;
+}
+.lh-modal-actionbar .lh-primary {
+    flex: 1;
+    min-height: 44px;
+    font-size: 1rem;
+}
 .lh-modal-close {
-    position: absolute;
-    top: 8px; right: 8px;
     background: transparent;
     border: none;
     color: var(--lh-text-muted);
-    font-size: 1.2rem;
+    font-size: 1.4rem;
     cursor: pointer;
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
 }
 .lh-modal-head {
     display: flex; gap: 14px;
     margin-bottom: 10px;
 }
-.lh-modal-head h2 { margin: 0 0 6px; }
+.lh-modal-head h2 { margin: 0 0 6px; font-size: 1.1rem; line-height: 1.25; }
+.lh-modal-head-text { min-width: 0; flex: 1; }
 .lh-modal-poster {
-    width: 90px;
+    width: 80px;
     aspect-ratio: 2 / 3;
     object-fit: cover;
     border-radius: 8px;
+    flex-shrink: 0;
 }
 .lh-modal-meta {
     display: flex; gap: 8px; align-items: center;
     color: var(--lh-text-muted);
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     margin-bottom: 4px;
+    flex-wrap: wrap;
 }
+.lh-modal-genres { font-size: 0.78rem; margin-bottom: 4px; }
+.lh-modal-disk-summary {
+    font-size: 0.85rem;
+    color: var(--lh-accent);
+    font-weight: 500;
+}
+.lh-modal-allowned {
+    background: rgba(34, 197, 94, 0.08);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    border-radius: 10px;
+    padding: 14px;
+    text-align: center;
+}
+.lh-modal-allowned h3 { color: #86efac; margin: 0 0 4px; }
+.lh-modal-sendmsg { margin: 8px 0 0; font-size: 0.9rem; }
 .lh-overview {
     margin: 6px 0 12px;
     color: var(--lh-text);
-    font-size: 0.92rem;
+    font-size: 0.9rem;
     line-height: 1.4;
 }
 .lh-modal-section { margin-top: 10px; }
 .lh-modal-section h3 { font-size: 0.95rem; margin: 0 0 6px; }
-.lh-link-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.lh-modal-section summary {
+    cursor: pointer;
+    font-size: 0.95rem;
+    font-weight: 600;
+    list-style: none;
+    padding: 4px 0;
+}
+.lh-modal-section summary::-webkit-details-marker { display: none; }
+.lh-modal-section summary::before {
+    content: "▸ ";
+    color: var(--lh-text-muted);
+    font-weight: 400;
+}
+.lh-modal-section[open] summary::before { content: "▾ "; }
+.lh-link-list { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 4px; }
 .lh-link-row {
     display: flex; align-items: center; gap: 8px;
-    padding: 6px 8px;
+    padding: 8px 10px;
     background: var(--lh-surface-2);
     border-radius: 8px;
     cursor: pointer;
+    min-height: 40px;
 }
-.lh-link-row input { width: 16px; height: 16px; }
+.lh-link-row input { width: 18px; height: 18px; flex-shrink: 0; }
 .lh-link-host { font-weight: 600; font-size: 0.85rem; min-width: 80px; }
-.lh-modal-actions {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    margin-top: 14px;
-}

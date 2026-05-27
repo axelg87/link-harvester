@@ -10,8 +10,8 @@
     z-index: 10;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 12px 16px;
+    gap: 6px;
+    padding: 10px 12px;
     background: linear-gradient(180deg, var(--lh-surface), var(--lh-surface-2));
     border-bottom: 1px solid var(--lh-border);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
@@ -19,8 +19,15 @@
 
 .lh-brand {
     font-weight: 700;
-    font-size: 1.05rem;
+    font-size: 1rem;
     letter-spacing: 0.02em;
+}
+
+/* On narrow phones brand text would crowd the icon row; show a shorter mark. */
+@media (max-width: 480px) {
+    .lh-header { padding: 8px 10px; gap: 4px; }
+    .lh-brand { font-size: 0; }
+    .lh-brand::before { content: "LH"; font-size: 1rem; }
 }
 
 .lh-spacer {
@@ -32,17 +39,22 @@
     color: var(--lh-text);
     border: 1px solid var(--lh-border);
     border-radius: 10px;
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 44px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     transition: background 0.1s;
+    text-decoration: none;
 }
 
-.lh-iconbtn:hover {
+.lh-iconbtn:hover, .lh-iconbtn:active {
     background: var(--lh-surface-4);
+}
+
+@media (max-width: 480px) {
+    .lh-iconbtn { width: 40px; height: 40px; border-radius: 8px; }
 }
 
 .lh-icon {
@@ -56,4 +68,8 @@
     max-width: 720px;
     width: 100%;
     margin: 0 auto;
+}
+
+@media (max-width: 480px) {
+    .lh-main { padding: 12px; }
 }
