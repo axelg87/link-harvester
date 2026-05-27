@@ -104,6 +104,7 @@
         SendMessage="_sendMessage"
         Inventory="_inventory"
         InventoryLoading="_inventoryLoading"
+        OwnedEpisodes="_ownedEpisodes"
         OnClose="CloseTitle"
         OnToggleLink="@(args => ToggleLink(args.LinkId, args.On))"
         OnSend="SendSelected" />
@@ -128,6 +129,7 @@
     private InventoryResult? _inventory;
     private bool _inventoryLoading;
     private CancellationTokenSource? _inventoryCts;
+    private HashSet<(int s, int e)> _ownedEpisodes = new();
     // Separate from _sendMessage so a transient search error doesn't appear
     // inside the open title-detail modal where it makes no sense.
     private string? _searchError;
@@ -223,17 +225,11 @@
             _selectedLinkIds = new HashSet<int>();
             _sendMessage = null;
             _inventory = null;
+            _ownedEpisodes = new();
             if (title is null) return;
             _selectedTitle = title;
 
-            var links = title.Links ?? new();
-            var episodeLinks = (title.Episodes ?? new()).SelectMany(e => e.Links ?? new());
-            var best = links
-                .Concat(episodeLinks)
-                .OrderBy(l => HostRank(l.Host))
-                .ThenByDescending(l => l.SizeBytes ?? 0)
-                .FirstOrDefault();
-            if (best is not null) _selectedLinkIds.Add(best.Id);
+            ApplyInitialSelection(title);
 
             _ = LoadInventoryAsync(id);
         }
@@ -241,6 +237,77 @@
         {
             _titleError = "Could not open title: " + ex.Message;
         }
+    }
+
+    // Initial pre-selection (before inventory): one best link per episode,
+    // or the single best title-level link for movies/no-episode titles.
+    private void ApplyInitialSelection(TitleDetail title)
+    {
+        _selectedLinkIds.Clear();
+        var episodes = title.Episodes ?? new();
+        if (episodes.Count > 0)
+        {
+            foreach (var ep in episodes)
+            {
+                var bestForEp = (ep.Links ?? new())
+                    .OrderBy(l => HostRank(l.Host))
+                    .ThenByDescending(l => l.SizeBytes ?? 0)
+                    .FirstOrDefault();
+                if (bestForEp is not null) _selectedLinkIds.Add(bestForEp.Id);
+            }
+        }
+        else
+        {
+            var bestTitle = (title.Links ?? new())
+                .OrderBy(l => HostRank(l.Host))
+                .ThenByDescending(l => l.SizeBytes ?? 0)
+                .FirstOrDefault();
+            if (bestTitle is not null) _selectedLinkIds.Add(bestTitle.Id);
+        }
+    }
+
+    // After inventory lands, drop the pre-selected link of any episode whose
+    // file is already on disk. We don't touch the user's manual toggles
+    // beyond this — race is rare since inventory completes in ~600ms.
+    private void RefineSelectionWithOwned(TitleDetail title, InventoryResult inv)
+    {
+        var owned = ParseOwnedEpisodes(inv);
+        _ownedEpisodes = owned;
+        if (owned.Count == 0) return;
+
+        foreach (var ep in title.Episodes ?? new())
+        {
+            var isOwned = ep.IsFullSeason
+                ? owned.Any(o => o.s == ep.SeasonNumber)
+                : owned.Contains((ep.SeasonNumber, ep.EpisodeNumber));
+            if (!isOwned) continue;
+            foreach (var l in ep.Links ?? new())
+                _selectedLinkIds.Remove(l.Id);
+        }
+    }
+
+    // SxxExx is the dominant scene-release pattern; 1x03 covers older
+    // anime/TV scrapes. Falls back silently for files that don't match —
+    // those just won't count as "owned" for any specific episode.
+    private static readonly System.Text.RegularExpressions.Regex EpisodeRx =
+        new(@"(?:S(\d{1,2})E(\d{1,2})|\b(\d{1,2})x(\d{1,2})\b)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static HashSet<(int s, int e)> ParseOwnedEpisodes(InventoryResult? inv)
+    {
+        var set = new HashSet<(int, int)>();
+        if (inv is null || !inv.Exists) return set;
+        foreach (var f in inv.Files)
+        {
+            var m = EpisodeRx.Match(f.Name);
+            if (!m.Success) continue;
+            var sg = m.Groups[1].Success ? m.Groups[1] : m.Groups[3];
+            var eg = m.Groups[2].Success ? m.Groups[2] : m.Groups[4];
+            if (int.TryParse(sg.Value, out var s) && int.TryParse(eg.Value, out var e))
+                set.Add((s, e));
+        }
+        return set;
     }
 
     private async Task LoadInventoryAsync(int id)
@@ -255,6 +322,8 @@
             var result = await Api.GetTitleInventoryAsync(id, ct);
             if (ct.IsCancellationRequested) return;
             _inventory = result;
+            if (result is { Ok: true, Exists: true } && _selectedTitle is not null)
+                RefineSelectionWithOwned(_selectedTitle, result);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -278,6 +347,7 @@
         _selectedTitle = null;
         _inventory = null;
         _inventoryLoading = false;
+        _ownedEpisodes = new();
     }
 
     private void ToggleLink(int id, bool on)
