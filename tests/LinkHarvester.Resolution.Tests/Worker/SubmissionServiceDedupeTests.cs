@@ -186,6 +186,8 @@ public class SubmissionServiceDedupeTests
             EnsureFoldersCalls++;
             return Task.CompletedTask;
         }
+        public Task<DsmListResult> ListFolderAsync(string folderPath, CancellationToken ct)
+            => Task.FromResult(new DsmListResult(Exists: false, FolderPath: folderPath, Files: Array.Empty<DsmFileEntry>()));
     }
 
     private sealed class ThrowingResolver : ILinkResolver

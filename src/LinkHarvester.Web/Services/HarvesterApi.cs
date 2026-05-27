@@ -144,6 +144,14 @@ public sealed class HarvesterApi
         return await resp.Content.ReadFromJsonAsync<TitleDetail>(cancellationToken: ct);
     }
 
+    public async Task<InventoryResult?> GetTitleInventoryAsync(int id, CancellationToken ct = default)
+    {
+        using var resp = await _http.GetAsync($"api/catalog/titles/{id}/inventory", ct);
+        if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        resp.EnsureSuccessStatusCode();
+        return await resp.Content.ReadFromJsonAsync<InventoryResult>(cancellationToken: ct);
+    }
+
     public async Task<CatalogSendResult> SendCatalogLinksAsync(IEnumerable<int> linkIds, CancellationToken ct = default)
     {
         using var resp = await _http.PostAsJsonAsync("api/catalog/links/send", new { linkIds = linkIds.ToList() }, ct);

@@ -102,7 +102,13 @@ public sealed record SearchHit(
     int Id, string Title, string? OriginalTitle, string Category, string? Poster,
     int LinkCount, int EpisodeCount, int? Year, double? Rating, int? Runtime,
     string? Overview, List<string> Genres, string? OriginalLanguage, string? EnrichmentSource,
-    bool MetadataUncertain);
+    bool MetadataUncertain, int? SeasonNumber);
+
+public sealed record InventoryFile(string Name, long? SizeBytes, DateTimeOffset? ModifiedAt);
+
+public sealed record InventoryResult(
+    bool Ok, string? Error, bool Exists, string FolderPath, int? SeasonNumber,
+    List<InventoryFile> Files);
 
 public sealed record SearchPage(int Total, int Page, int PageSize, List<SearchHit> Items);
 
