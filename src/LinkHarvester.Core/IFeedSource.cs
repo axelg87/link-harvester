@@ -67,11 +67,22 @@ public interface ILinkResolver
 }
 
 /// <summary>
-/// Synology DownloadStation submission API.
+/// Synology DownloadStation submission API. Also exposes the minimum
+/// FileStation surface needed to mkdir destination folders before submitting
+/// a download — DSM auto-creation is unreliable on nested paths, so we always
+/// create the folder up front.
 /// </summary>
 public interface IDownloadStationClient
 {
     Task<IReadOnlyList<string>> CreateTasksAsync(IEnumerable<string> urls, string? destination, CancellationToken ct);
+
+    /// <summary>
+    /// Ensure each folder path in <paramref name="folderPaths"/> exists on the
+    /// NAS volume, creating intermediate parents as needed. Paths are
+    /// relative to the volume root (no leading slash). Idempotent — existing
+    /// folders are left alone.
+    /// </summary>
+    Task EnsureFoldersAsync(IEnumerable<string> folderPaths, CancellationToken ct);
 }
 
 public interface IQualityScorer

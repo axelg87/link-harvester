@@ -291,6 +291,7 @@ public static class CatalogEndpoints
 
             var links = await db.CatalogLinks.AsNoTracking()
                 .Include(l => l.Title)
+                .ThenInclude(t => t.Episodes)
                 .Where(l => req.LinkIds.Contains(l.Id))
                 .ToListAsync(ct);
             if (links.Count == 0) return Results.NotFound();
@@ -328,10 +329,21 @@ public static class CatalogEndpoints
                 .ToList();
             var urls = directLinks.Select(l => l.LinkUrl).Distinct().ToList();
             if (urls.Count == 0) return Results.BadRequest(new { error = "no direct catalog links provided" });
-            var kindIsMovie = links.All(l => string.Equals(l.Title.CategoryName, "Films", StringComparison.OrdinalIgnoreCase));
-            var dest = kindIsMovie
-                ? settings.Current.SynologyMovieDestination
-                : settings.Current.SynologySeriesDestination;
+
+            // Kind-aware destination — if every selected link belongs to a
+            // single title we use <Root>/<Title>/Season N; otherwise (mixed
+            // batch) we fall back to the kind root with no per-title subfolder.
+            var dest = BuildCatalogDestination(links, settings.Current);
+            var foldersToEnsure = CatalogFoldersToEnsure(links, settings.Current);
+            if (foldersToEnsure.Count > 0)
+            {
+                try { await dsm.EnsureFoldersAsync(foldersToEnsure, ct); }
+                catch (DsmException dx)
+                {
+                    return Results.BadRequest(new { error = $"Could not create destination folder: {dx.HumanMessage}" });
+                }
+            }
+
             var attempt = new SubmissionEntity
             {
                 Source = SendSourceKind.Catalog,
@@ -491,4 +503,59 @@ public static class CatalogEndpoints
 
     public sealed record SendLinksReq(List<int> LinkIds);
     public sealed record SendResultDto(bool Ok, string? Error, List<string> TaskIds, int Submitted);
+
+    private static string BuildCatalogDestination(
+        List<CatalogLinkEntity> links,
+        AppSettingsSnapshot s)
+    {
+        // Mixed-category batch: fall back to the movie root (rare in practice
+        // — users send one title at a time).
+        var distinctTitles = links.Select(l => l.TitleId).Distinct().Count();
+        if (distinctTitles != 1)
+            return s.SynologyMovieDestination;
+
+        var first = links[0].Title;
+        return MatchPlan(first, s).FullPath;
+    }
+
+    private static IReadOnlyList<string> CatalogFoldersToEnsure(
+        List<CatalogLinkEntity> links,
+        AppSettingsSnapshot s)
+    {
+        var distinctTitles = links.Select(l => l.TitleId).Distinct().Count();
+        if (distinctTitles != 1) return Array.Empty<string>();
+        return MatchPlan(links[0].Title, s).ParentSegments;
+    }
+
+    private static DsmDestinationBuilder.DestinationPlan MatchPlan(
+        CatalogTitleEntity title,
+        AppSettingsSnapshot s)
+    {
+        // CatalogTitles store CategoryName as a string ("Films", "Séries",
+        // "Animes", "Other"). Map to our kind-aware path builder.
+        return title.CategoryName switch
+        {
+            var c when string.Equals(c, "Films", StringComparison.OrdinalIgnoreCase) =>
+                DsmDestinationBuilder.ForMovie(s.SynologyMovieDestination),
+            var c when string.Equals(c, "Animes", StringComparison.OrdinalIgnoreCase) =>
+                DsmDestinationBuilder.ForAnime(s.SynologyAnimeDestination, title.TitleName, FirstSeasonNumber(title)),
+            var c when string.Equals(c, "Séries", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(c, "Series", StringComparison.OrdinalIgnoreCase) =>
+                DsmDestinationBuilder.ForSeries(s.SynologySeriesDestination, title.TitleName, FirstSeasonNumber(title)),
+            _ => DsmDestinationBuilder.ForMovie(s.SynologyMovieDestination),
+        };
+    }
+
+    private static int? FirstSeasonNumber(CatalogTitleEntity title)
+    {
+        // CatalogTitleEntity.Episodes isn't always loaded; if we have it, use
+        // the lowest non-zero season we know about. Otherwise leave null and
+        // the path builder will produce <Root>/<Title> (no Season N level).
+        if (title.Episodes is not { Count: > 0 }) return null;
+        var seasons = title.Episodes
+            .Select(e => e.SeasonNumber)
+            .Where(n => n > 0)
+            .ToList();
+        return seasons.Count == 0 ? null : seasons.Min();
+    }
 }

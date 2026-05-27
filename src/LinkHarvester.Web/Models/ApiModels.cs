@@ -45,6 +45,7 @@ public sealed record Settings(
     string SynologyResolvedBaseUrl, DateTimeOffset? SynologyResolvedAt,
     string SynologyUsername, bool SynologyPasswordSet,
     string? SynologyOtpCode, string SynologyMovieDestination, string SynologySeriesDestination,
+    string SynologyAnimeDestination,
     int ScanIntervalMinutes, bool ScanOnStartup, List<string> HosterPriority,
     string AuthUsername, bool AuthPasswordSet,
     bool TmdbApiKeySet, bool TmdbEnrichmentEnabled, int TmdbEnrichmentConcurrency);
@@ -53,6 +54,7 @@ public sealed record UpdateSettings(
     string? SynologyBaseUrl, string? SynologyConnectionMode, string? SynologyQuickConnectId,
     string? SynologyUsername, string? SynologyPassword,
     string? SynologyOtpCode, string? SynologyMovieDestination, string? SynologySeriesDestination,
+    string? SynologyAnimeDestination,
     int? ScanIntervalMinutes, bool? ScanOnStartup, List<string>? HosterPriority,
     string? AuthUsername, string? AuthPassword,
     string? TmdbApiKey, bool TmdbEnrichmentEnabled, int TmdbEnrichmentConcurrency);

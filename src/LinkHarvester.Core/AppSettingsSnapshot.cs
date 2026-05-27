@@ -12,6 +12,7 @@ public sealed record AppSettingsSnapshot(
     string? SynologyOtpCode,
     string SynologyMovieDestination,
     string SynologySeriesDestination,
+    string SynologyAnimeDestination,
     // Harvester
     int ScanIntervalMinutes,
     bool ScanOnStartup,

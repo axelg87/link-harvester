@@ -23,6 +23,7 @@ public static class SettingsEndpoints
                 SynologyOtpCode: c.SynologyOtpCode,
                 SynologyMovieDestination: c.SynologyMovieDestination,
                 SynologySeriesDestination: c.SynologySeriesDestination,
+                SynologyAnimeDestination: c.SynologyAnimeDestination,
                 ScanIntervalMinutes: c.ScanIntervalMinutes,
                 ScanOnStartup: c.ScanOnStartup,
                 HosterPriority: c.HosterPriority.ToList(),
@@ -55,6 +56,7 @@ public static class SettingsEndpoints
                 SynologyOtpCode = req.SynologyOtpCode,
                 SynologyMovieDestination = req.SynologyMovieDestination ?? current.SynologyMovieDestination,
                 SynologySeriesDestination = req.SynologySeriesDestination ?? current.SynologySeriesDestination,
+                SynologyAnimeDestination = req.SynologyAnimeDestination ?? current.SynologyAnimeDestination,
                 ScanIntervalMinutes = req.ScanIntervalMinutes ?? current.ScanIntervalMinutes,
                 ScanOnStartup = req.ScanOnStartup ?? current.ScanOnStartup,
                 HosterPriority = (req.HosterPriority is { Count: > 0 } ? req.HosterPriority : current.HosterPriority.ToList()),
@@ -121,6 +123,7 @@ public static class SettingsEndpoints
         string SynologyResolvedBaseUrl, DateTimeOffset? SynologyResolvedAt,
         string SynologyUsername, bool SynologyPasswordSet,
         string? SynologyOtpCode, string SynologyMovieDestination, string SynologySeriesDestination,
+        string SynologyAnimeDestination,
         int ScanIntervalMinutes, bool ScanOnStartup, List<string> HosterPriority,
         string AuthUsername, bool AuthPasswordSet,
         bool TmdbApiKeySet, bool TmdbEnrichmentEnabled, int TmdbEnrichmentConcurrency);
@@ -129,6 +132,7 @@ public static class SettingsEndpoints
         string? SynologyBaseUrl, string? SynologyConnectionMode, string? SynologyQuickConnectId,
         string? SynologyUsername, string? SynologyPassword,
         string? SynologyOtpCode, string? SynologyMovieDestination, string? SynologySeriesDestination,
+        string? SynologyAnimeDestination,
         int? ScanIntervalMinutes, bool? ScanOnStartup, List<string>? HosterPriority,
         string? AuthUsername, string? AuthPassword,
         string? TmdbApiKey, bool? TmdbEnrichmentEnabled, int? TmdbEnrichmentConcurrency);

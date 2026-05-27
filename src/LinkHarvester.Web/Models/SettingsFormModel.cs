@@ -16,6 +16,7 @@ public sealed class SettingsFormModel
     public string? SynologyOtpCode { get; set; }
     public string SynologyMovieDestination { get; set; } = "";
     public string SynologySeriesDestination { get; set; } = "";
+    public string SynologyAnimeDestination { get; set; } = "";
     public int ScanIntervalMinutes { get; set; }
     public bool ScanOnStartup { get; set; }
     public List<string> HosterPriority { get; set; } = new();
@@ -35,6 +36,7 @@ public sealed class SettingsFormModel
         SynologyOtpCode = s.SynologyOtpCode,
         SynologyMovieDestination = s.SynologyMovieDestination,
         SynologySeriesDestination = s.SynologySeriesDestination,
+        SynologyAnimeDestination = s.SynologyAnimeDestination,
         ScanIntervalMinutes = s.ScanIntervalMinutes,
         ScanOnStartup = s.ScanOnStartup,
         HosterPriority = s.HosterPriority.ToList(),
@@ -54,6 +56,7 @@ public sealed class SettingsFormModel
         SynologyOtpCode: SynologyOtpCode,
         SynologyMovieDestination: SynologyMovieDestination,
         SynologySeriesDestination: SynologySeriesDestination,
+        SynologyAnimeDestination: SynologyAnimeDestination,
         ScanIntervalMinutes: ScanIntervalMinutes,
         ScanOnStartup: ScanOnStartup,
         HosterPriority: HosterPriority.Where(h => !string.IsNullOrWhiteSpace(h)).ToList(),

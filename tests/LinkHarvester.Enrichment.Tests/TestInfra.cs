@@ -58,6 +58,7 @@ internal sealed class FakeSettingsService : ISettingsService
         SynologyOtpCode: null,
         SynologyMovieDestination: "video/movies",
         SynologySeriesDestination: "video/series",
+        SynologyAnimeDestination: "video/anime",
         ScanIntervalMinutes: 30,
         ScanOnStartup: false,
         HosterPriority: Array.Empty<string>(),
