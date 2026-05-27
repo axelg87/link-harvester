@@ -1,0 +1,176 @@
+@*
+    Shared media tile grid with long-press multi-select.
+
+    Used by both /catalog and / (inbox) so the layout, selection UX, long-press
+    timing, and bulk-send action bar live in exactly one place.
+
+    The parent owns the data and the "what does click/send mean" logic; this
+    component owns the grid layout + selection state. Long-press is 500ms; if
+    the user lifts before that, it's treated as a normal tap (forwarded to
+    OnItemClick). Once in select mode, plain taps toggle selection until the
+    user hits Cancel or sends.
+*@
+
+@typeparam TItem
+
+<div class="lh-mediagrid">
+    @if (_selectMode)
+    {
+        <div class="lh-mediagrid-bar">
+            <span class="lh-mediagrid-count">@_selected.Count selected</span>
+            <button class="lh-secondary lh-mediagrid-btn"
+                    @onclick="ToggleSelectAll"
+                    disabled="@(Items.Count == 0)">
+                @(_selected.Count == SelectableCount() && SelectableCount() > 0 ? "Clear" : "All")
+            </button>
+            <button class="lh-primary lh-mediagrid-btn"
+                    @onclick="HandleBulkSend"
+                    disabled="@(_selected.Count == 0 || Sending)">
+                @(Sending ? "Sending…" : $"Send {_selected.Count}")
+            </button>
+            <button class="lh-secondary lh-mediagrid-btn"
+                    @onclick="ExitSelectMode">
+                ✕
+            </button>
+        </div>
+    }
+
+    <div class="lh-grid">
+        @foreach (var item in Items)
+        {
+            var id = ItemId(item);
+            var selectable = IsSelectable is null || IsSelectable(item);
+            var isSelected = _selected.Contains(id);
+            <div class="lh-grid-cell @(isSelected ? "lh-grid-cell-selected" : "") @(selectable ? "" : "lh-grid-cell-disabled")"
+                 @onclick="@(() => HandleTap(id, selectable))"
+                 @onpointerdown="@(() => StartLongPress(id, selectable))"
+                 @onpointerup="EndLongPress"
+                 @onpointerleave="EndLongPress"
+                 @onpointercancel="EndLongPress">
+                @ItemTemplate(item)
+                @if (isSelected)
+                {
+                    <div class="lh-grid-cell-check">✓</div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<TItem> Items { get; set; } = Array.Empty<TItem>();
+    [Parameter, EditorRequired] public Func<TItem, int> ItemId { get; set; } = default!;
+    [Parameter, EditorRequired] public RenderFragment<TItem> ItemTemplate { get; set; } = default!;
+    [Parameter] public Func<TItem, bool>? IsSelectable { get; set; }
+    [Parameter] public bool Sending { get; set; }
+    [Parameter] public EventCallback<int> OnItemClick { get; set; }
+    [Parameter] public EventCallback<IReadOnlyCollection<int>> OnSelectionAdded { get; set; }
+    [Parameter] public EventCallback<IReadOnlyCollection<int>> OnBulkSend { get; set; }
+
+    private readonly HashSet<int> _selected = new();
+    private bool _selectMode;
+    private int? _pressingId;
+    private CancellationTokenSource? _pressCts;
+    // Flag so a long-press that already entered select mode doesn't also
+    // trigger the subsequent click event with a stale tap.
+    private bool _suppressNextTap;
+
+    private int SelectableCount() => IsSelectable is null
+        ? Items.Count
+        : Items.Count(IsSelectable);
+
+    private void StartLongPress(int id, bool selectable)
+    {
+        if (!selectable) return;
+        _pressingId = id;
+        _pressCts?.Cancel();
+        _pressCts = new CancellationTokenSource();
+        var ct = _pressCts.Token;
+        _ = InvokeAsync(async () =>
+        {
+            try { await Task.Delay(500, ct); }
+            catch (TaskCanceledException) { return; }
+            if (ct.IsCancellationRequested) return;
+            if (_pressingId != id) return;
+            _selectMode = true;
+            await AddToSelection(id);
+            _suppressNextTap = true;
+            StateHasChanged();
+        });
+    }
+
+    private void EndLongPress()
+    {
+        _pressCts?.Cancel();
+        _pressingId = null;
+    }
+
+    private async Task HandleTap(int id, bool selectable)
+    {
+        if (_suppressNextTap)
+        {
+            _suppressNextTap = false;
+            return;
+        }
+        if (_selectMode)
+        {
+            if (!selectable) return;
+            if (_selected.Contains(id))
+            {
+                _selected.Remove(id);
+                if (_selected.Count == 0) _selectMode = false;
+            }
+            else
+            {
+                await AddToSelection(id);
+            }
+            StateHasChanged();
+            return;
+        }
+        await OnItemClick.InvokeAsync(id);
+    }
+
+    private async Task ToggleSelectAll()
+    {
+        if (_selected.Count == SelectableCount())
+        {
+            _selected.Clear();
+            _selectMode = false;
+        }
+        else
+        {
+            var toAdd = new List<int>();
+            foreach (var item in Items)
+            {
+                if (IsSelectable is not null && !IsSelectable(item)) continue;
+                var id = ItemId(item);
+                if (_selected.Add(id)) toAdd.Add(id);
+            }
+            if (toAdd.Count > 0) await OnSelectionAdded.InvokeAsync(toAdd);
+        }
+        StateHasChanged();
+    }
+
+    private void ExitSelectMode()
+    {
+        _selected.Clear();
+        _selectMode = false;
+        StateHasChanged();
+    }
+
+    private Task HandleBulkSend() => OnBulkSend.InvokeAsync(_selected.ToList());
+
+    private async Task AddToSelection(int id)
+    {
+        if (_selected.Add(id))
+            await OnSelectionAdded.InvokeAsync(new[] { id });
+    }
+
+    // Called by the parent after a successful bulk send so the grid resets.
+    public void Reset()
+    {
+        _selected.Clear();
+        _selectMode = false;
+        StateHasChanged();
+    }
+}

@@ -1,139 +1,112 @@
 @* Modal that shows a single catalog title's links + episodes and lets the user
    pick which links to send to DSM. Pure presentational — all state and the
-   actual send call live in the parent Catalog page. *@
+   actual send call live in the parent Catalog page.
+
+   Layout choices:
+   - The action bar is pinned to the top of the modal card (mobile UX: never
+     scroll past 10 episodes × 4 hosters to send).
+   - Owned-episode sections are collapsed inside <details> by default so the
+     missing-episode work is the only thing visible by default.
+*@
 
 <div class="lh-modal" @onclick="OnClose">
     <div class="lh-modal-card" @onclick:stopPropagation="true">
-        <button class="lh-modal-close" @onclick="OnClose">✕</button>
+        <div class="lh-modal-actionbar">
+            <button class="lh-primary" @onclick="OnSend"
+                    disabled="@(SelectedLinkIds.Count == 0 || Sending)">
+                @(Sending
+                    ? "Sending…"
+                    : SelectedLinkIds.Count == 0
+                        ? "Nothing to send"
+                        : $"Send {SelectedLinkIds.Count} to NAS")
+            </button>
+            <button class="lh-modal-close" @onclick="OnClose" aria-label="Close">✕</button>
+        </div>
+
         <header class="lh-modal-head">
             @if (!string.IsNullOrEmpty(Title.Poster))
             {
                 <img src="@Title.Poster" alt="" class="lh-modal-poster" />
             }
-            <div>
+            <div class="lh-modal-head-text">
                 <h2>@Title.Title</h2>
                 <div class="lh-modal-meta">
                     @if (Title.Year.HasValue) { <span>@Title.Year</span> }
                     @if (Title.Rating.HasValue) { <span>★ @Title.Rating.Value.ToString("0.0")</span> }
                     @if (Title.Runtime.HasValue) { <span>@Title.Runtime min</span> }
                     <span class="lh-tag">@Title.Category</span>
-                    @if (Title.MetadataUncertain) { <span class="lh-tag">metadata uncertain</span> }
                 </div>
                 @if ((Title.Genres ?? new()).Count > 0)
                 {
-                    <div class="lh-muted">@string.Join(" · ", Title.Genres ?? new())</div>
+                    <div class="lh-muted lh-modal-genres">@string.Join(" · ", Title.Genres ?? new())</div>
                 }
+                <div class="lh-modal-disk-summary">@DiskSummary()</div>
             </div>
         </header>
 
-        @if (!string.IsNullOrEmpty(Title.Overview))
+        @if (AllOnDisk())
         {
-            <p class="lh-overview">@Title.Overview</p>
-        }
-
-        <section class="lh-modal-section lh-inventory">
-            <h3>On disk</h3>
-            @if (InventoryLoading)
-            {
-                <p class="lh-muted">Checking the NAS…</p>
-            }
-            else if (Inventory is null)
-            {
-                <p class="lh-muted">Not checked.</p>
-            }
-            else if (!Inventory.Ok)
-            {
-                <p class="lh-error">Couldn't reach NAS: @Inventory.Error</p>
-            }
-            else if (!Inventory.Exists)
-            {
-                <p class="lh-muted">Not on disk yet (looked in @Inventory.FolderPath).</p>
-            }
-            else if (Inventory.Files.Count == 0)
-            {
-                <p class="lh-muted">Folder exists but no media files: @Inventory.FolderPath</p>
-            }
-            else
-            {
-                <p class="lh-muted">@Inventory.Files.Count file@(Inventory.Files.Count == 1 ? "" : "s") in @Inventory.FolderPath</p>
-                <ul class="lh-disk-list">
-                    @foreach (var f in Inventory.Files)
-                    {
-                        <li>
-                            <span class="lh-disk-name">@f.Name</span>
-                            @if (f.SizeBytes.HasValue) { <span class="lh-muted">@FormatHelpers.FormatSize(f.SizeBytes.Value)</span> }
-                        </li>
-                    }
-                </ul>
-            }
-        </section>
-
-        @if ((Title.Links ?? new()).Count > 0)
-        {
-            <section class="lh-modal-section">
-                <h3>Links</h3>
-                <ul class="lh-link-list">
-                    @foreach (var l in Title.Links ?? new())
-                    {
-                        <li>
-                            <label class="lh-link-row">
-                                <input type="checkbox" checked="@SelectedLinkIds.Contains(l.Id)"
-                                       @onchange="@(e => InvokeToggle(l.Id, e.Value is bool b && b))" />
-                                <span class="lh-link-host">@l.Host</span>
-                                @if (IsZt(l))
-                                {
-                                    <span class="lh-tag">ZT</span>
-                                    <span class="lh-muted">resolves one hoster using your priority</span>
-                                }
-                                @if (!string.IsNullOrEmpty(l.Quality)) { <span class="lh-tag lh-tag-quality">@l.Quality</span> }
-                                @if (l.SizeBytes.HasValue) { <span class="lh-muted">@FormatHelpers.FormatSize(l.SizeBytes.Value)</span> }
-                                @if (!string.IsNullOrEmpty(l.AudioLangs)) { <span class="lh-muted">@l.AudioLangs</span> }
-                            </label>
-                        </li>
-                    }
-                </ul>
+            <section class="lh-modal-section lh-modal-allowned">
+                <h3>✓ Every episode is already on disk</h3>
+                <p class="lh-muted">@(Inventory?.Files.Count ?? 0) files in @Inventory?.FolderPath</p>
             </section>
         }
-
-        @foreach (var ep in Title.Episodes ?? new())
+        else
         {
-            var owned = IsEpisodeOwned(ep);
-            <section class="lh-modal-section @(owned ? "lh-section-owned" : "")">
-                <h3>
-                    @FormatEpisodeHeader(ep)
-                    @if (owned) { <span class="lh-tag lh-tag-owned">✓ on disk</span> }
-                </h3>
-                <ul class="lh-link-list">
-                    @foreach (var l in ep.Links ?? new())
-                    {
-                        <li>
-                            <label class="lh-link-row">
-                                <input type="checkbox" checked="@SelectedLinkIds.Contains(l.Id)"
-                                       @onchange="@(e => InvokeToggle(l.Id, e.Value is bool b && b))" />
-                                <span class="lh-link-host">@l.Host</span>
-                                @if (IsZt(l))
-                                {
-                                    <span class="lh-tag">ZT</span>
-                                    <span class="lh-muted">resolves one hoster using your priority</span>
-                                }
-                                @if (!string.IsNullOrEmpty(l.Quality)) { <span class="lh-tag lh-tag-quality">@l.Quality</span> }
-                                @if (l.SizeBytes.HasValue) { <span class="lh-muted">@FormatHelpers.FormatSize(l.SizeBytes.Value)</span> }
-                            </label>
-                        </li>
-                    }
-                </ul>
-            </section>
+            @if (!string.IsNullOrEmpty(Title.Overview))
+            {
+                <p class="lh-overview">@Title.Overview</p>
+            }
+
+            @if ((Title.Links ?? new()).Count > 0)
+            {
+                <section class="lh-modal-section">
+                    <h3>Title links</h3>
+                    <ul class="lh-link-list">
+                        @foreach (var l in Title.Links ?? new())
+                        {
+                            <li>@RenderLinkRow(l)</li>
+                        }
+                    </ul>
+                </section>
+            }
+
+            @foreach (var ep in Title.Episodes ?? new())
+            {
+                var owned = IsEpisodeOwned(ep);
+                if (owned)
+                {
+                    <details class="lh-modal-section lh-section-owned">
+                        <summary>
+                            @FormatEpisodeHeader(ep)
+                            <span class="lh-tag lh-tag-owned">✓ on disk</span>
+                        </summary>
+                        <ul class="lh-link-list">
+                            @foreach (var l in ep.Links ?? new())
+                            {
+                                <li>@RenderLinkRow(l)</li>
+                            }
+                        </ul>
+                    </details>
+                }
+                else
+                {
+                    <section class="lh-modal-section">
+                        <h3>@FormatEpisodeHeader(ep)</h3>
+                        <ul class="lh-link-list">
+                            @foreach (var l in ep.Links ?? new())
+                            {
+                                <li>@RenderLinkRow(l)</li>
+                            }
+                        </ul>
+                    </section>
+                }
+            }
         }
 
-        <footer class="lh-modal-actions">
-            <span class="lh-muted">@SelectedLinkIds.Count selected</span>
-            <button class="lh-primary" @onclick="OnSend" disabled="@(SelectedLinkIds.Count == 0 || Sending)">
-                @(Sending ? "Sending…" : "Send to NAS")
-            </button>
-        </footer>
         @if (SendMessage is not null)
         {
-            <p class="@(SendOk ? "lh-muted" : "lh-error")">@SendMessage</p>
+            <p class="@(SendOk ? "lh-muted" : "lh-error") lh-modal-sendmsg">@SendMessage</p>
         }
     </div>
 </div>
@@ -153,10 +126,45 @@
 
     private Task InvokeToggle(int linkId, bool on) => OnToggleLink.InvokeAsync((linkId, on));
 
+    private RenderFragment RenderLinkRow(CatalogLink l) => __builder =>
+    {
+        <label class="lh-link-row">
+            <input type="checkbox" checked="@SelectedLinkIds.Contains(l.Id)"
+                   @onchange="@(e => InvokeToggle(l.Id, e.Value is bool b && b))" />
+            <span class="lh-link-host">@l.Host</span>
+            @if (IsZt(l))
+            {
+                <span class="lh-tag">ZT</span>
+            }
+            @if (!string.IsNullOrEmpty(l.Quality)) { <span class="lh-tag lh-tag-quality">@l.Quality</span> }
+            @if (l.SizeBytes.HasValue) { <span class="lh-muted">@FormatHelpers.FormatSize(l.SizeBytes.Value)</span> }
+            @if (!string.IsNullOrEmpty(l.AudioLangs)) { <span class="lh-muted">@l.AudioLangs</span> }
+        </label>
+    };
+
     private bool IsEpisodeOwned(CatalogEpisode ep) =>
         ep.IsFullSeason
             ? OwnedEpisodes.Any(o => o.s == ep.SeasonNumber)
             : OwnedEpisodes.Contains((ep.SeasonNumber, ep.EpisodeNumber));
+
+    private bool AllOnDisk()
+    {
+        var eps = Title.Episodes ?? new();
+        if (eps.Count == 0) return false;
+        return eps.All(IsEpisodeOwned);
+    }
+
+    private string DiskSummary()
+    {
+        if (InventoryLoading) return "Checking NAS…";
+        if (Inventory is null) return string.Empty;
+        if (!Inventory.Ok) return $"NAS check failed: {Inventory.Error}";
+        if (!Inventory.Exists) return "Not on disk yet.";
+        var eps = Title.Episodes ?? new();
+        if (eps.Count == 0) return $"{Inventory.Files.Count} file(s) on disk.";
+        var owned = eps.Count(IsEpisodeOwned);
+        return $"{owned} / {eps.Count} episode(s) on disk.";
+    }
 
     private static bool IsZt(CatalogLink link) =>
         string.Equals(link.Source, "zt", StringComparison.OrdinalIgnoreCase);

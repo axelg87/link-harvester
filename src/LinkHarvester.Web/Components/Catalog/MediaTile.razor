@@ -1,4 +1,4 @@
-<article class="lh-tile" @onclick="OnOpen">
+<article class="lh-tile">
     <div class="lh-poster">
         @if (!string.IsNullOrEmpty(Poster))
         {
@@ -44,5 +44,4 @@
     [Parameter] public bool MetadataUncertain { get; set; }
     [Parameter] public string? SourceLabel { get; set; }
     [Parameter] public int? SeasonNumber { get; set; }
-    [Parameter] public EventCallback OnOpen { get; set; }
 }
