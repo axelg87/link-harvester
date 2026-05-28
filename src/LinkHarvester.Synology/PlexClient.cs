@@ -28,6 +28,13 @@ public interface IPlexClient
 
     /// <summary>True when both BaseUrl and Token are set in settings.</summary>
     bool IsConfigured { get; }
+
+    /// <summary>
+    /// Best-effort fetch from Plex Discover's public watchlist trending feed.
+    /// Many tokens lack the required scope and Plex returns 401 / empty;
+    /// callers must tolerate an empty result without surfacing it as an error.
+    /// </summary>
+    Task<IReadOnlyList<PlexDiscoverEntry>> FetchDiscoverWatchlistAsync(string token, CancellationToken ct);
 }
 
 public sealed record PlexMovie(string Title, int? Year);
