@@ -14,18 +14,25 @@ namespace LinkHarvester.Persistence.Maintenance;
 /// The schema uses EF Core's <c>DateTimeOffsetToBinaryConverter</c>, which
 /// packs the value as <c>((ticks/1000) &lt;&lt; 11) | ((offsetMinutes + 1024)
 /// &amp; 0x7FF)</c>. Reading a Unix-ms long back through that converter
-/// reinterprets the low 11 bits as offset minutes, producing values outside
-/// the DSM-legal ±14 hour range about 18% of the time — which is the
-/// <c>System.ArgumentOutOfRangeException: Offset must be within plus or
-/// minus 14 hours</c> error users hit on every imported title.
+/// reinterprets the low 11 bits as offset minutes, lands outside the legal
+/// ±14 hour range about 18% of the time, and throws
+/// <c>ArgumentOutOfRangeException</c> on every read.
 ///
-/// Affected columns:
-///   <c>CatalogTitles.FirstSeenAt</c>, <c>CatalogTitles.LastSeenAt</c>,
-///   <c>CatalogLinks.CreatedAt</c> (the heavy one — millions of rows).
+/// Affected columns: <c>CatalogTitles.FirstSeenAt</c>,
+/// <c>CatalogTitles.LastSeenAt</c>, <c>CatalogLinks.CreatedAt</c>
+/// (the heavy one — millions of rows).
 ///
-/// Runs as a background hosted service so a fresh deploy with 2M+ stale
-/// rows doesn't blow Fly's startup grace period. Idempotent — subsequent
-/// boots find zero rows below the threshold and exit immediately.
+/// Strategy: <b>one SQL <c>UPDATE</c> statement per column</b>. The
+/// encoding math is closed-form for UTC (every value Hydracker wrote was
+/// UTC since <c>DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()</c> discards
+/// the offset) and SQLite can do the entire 2.3M-row re-encode in a single
+/// transaction in under a minute. The previous batched-loop approach did a
+/// full table scan per 5k-row batch and took 30+ minutes while starving
+/// every other read of the SQLite cache.
+///
+/// Runs as a background hosted service so a fresh deploy doesn't block
+/// startup. Idempotent — once a column has no rows below the magnitude
+/// threshold, the UPDATE is a no-op.
 /// </summary>
 public sealed class DateTimeOffsetRepairService : BackgroundService
 {
@@ -33,9 +40,26 @@ public sealed class DateTimeOffsetRepairService : BackgroundService
     // Unix-ms values for any date from 1970-2100 are < 10^13.
     private const long UnixMsCeiling = 1_000_000_000_000_000L; // 10^15
 
-    // Tune for SQLite WAL: keep transactions small enough that readers see
-    // recent writes within seconds (the API can keep serving while we work).
-    private const int BatchSize = 5_000;
+    // Constants of the encoding identity for UTC offsets, derived from
+    // EncodeBinary's formula:
+    //
+    //   encoded = ((Ticks / 1000) << 11) | ((offsetMin + 1024) & 0x7FF)
+    //
+    // For DateTimeOffset.FromUnixTimeMilliseconds(unixMs) the offset is
+    // always TimeSpan.Zero, so offsetMin = 0 and (offsetMin + 1024) & 0x7FF = 1024.
+    //
+    //   Ticks = UnixEpochTicks + unixMs * TicksPerMillisecond
+    //         = 621355968000000000 + unixMs * 10000
+    //   Ticks / 1000 = 621355968000000 + unixMs * 10
+    //
+    // The low 11 bits of (Ticks / 1000) << 11 are zero, so OR-ing 1024
+    // is equivalent to addition:
+    //
+    //   encoded = (621355968000000 + unixMs * 10) * 2048 + 1024
+    //
+    // Used directly in the UPDATE statements below.
+    private const long UnixEpochTicksDiv1000 = 621_355_968_000_000L;
+    private const long UtcOffsetEncodedBits = 1024L;
 
     private static readonly (string Table, string Column)[] Columns =
     {
@@ -57,18 +81,16 @@ public sealed class DateTimeOffsetRepairService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Let the API serve requests first — repair is best-effort and runs
-        // for as long as it takes.
+        // Let the API serve requests first — repair is best-effort.
         await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
 
         try
         {
-            var totalFixed = 0;
+            var totalFixed = 0L;
             foreach (var (table, col) in Columns)
             {
                 if (stoppingToken.IsCancellationRequested) return;
-                var fixedHere = await RepairColumnAsync(table, col, stoppingToken);
-                totalFixed += fixedHere;
+                totalFixed += await RepairColumnAsync(table, col, stoppingToken);
             }
 
             if (totalFixed == 0)
@@ -83,79 +105,35 @@ public sealed class DateTimeOffsetRepairService : BackgroundService
         }
     }
 
-    private async Task<int> RepairColumnAsync(string table, string col, CancellationToken ct)
-    {
-        // Pre-count so we can log a meaningful progress %.
-        long pending;
-        await using (var db = await _factory.CreateDbContextAsync(ct))
-        {
-            var conn = (SqliteConnection)db.Database.GetDbConnection();
-            await conn.OpenAsync(ct);
-            using var count = conn.CreateCommand();
-            count.CommandText =
-                $"SELECT COUNT(*) FROM {table} WHERE {col} > 0 AND {col} < {UnixMsCeiling.ToString(CultureInfo.InvariantCulture)}";
-            pending = (long)(await count.ExecuteScalarAsync(ct) ?? 0L);
-        }
-
-        if (pending == 0)
-        {
-            _log.LogDebug("DateTimeOffset repair: {Table}.{Col} clean (0 rows).", table, col);
-            return 0;
-        }
-
-        _log.LogInformation("DateTimeOffset repair: {Table}.{Col} has {Count} stale row(s); starting batched re-encode.",
-            table, col, pending);
-
-        var fixedTotal = 0;
-        while (!ct.IsCancellationRequested)
-        {
-            int fixedInBatch = await RepairBatchAsync(table, col, BatchSize, ct);
-            if (fixedInBatch == 0) break;
-            fixedTotal += fixedInBatch;
-            _log.LogInformation("DateTimeOffset repair: {Table}.{Col} {Done}/{Total} ({Pct:0}%).",
-                table, col, fixedTotal, pending, 100.0 * fixedTotal / Math.Max(1, pending));
-        }
-
-        return fixedTotal;
-    }
-
-    private async Task<int> RepairBatchAsync(string table, string col, int limit, CancellationToken ct)
+    private async Task<long> RepairColumnAsync(string table, string col, CancellationToken ct)
     {
         await using var db = await _factory.CreateDbContextAsync(ct);
         var conn = (SqliteConnection)db.Database.GetDbConnection();
         await conn.OpenAsync(ct);
 
-        var pending = new List<(long Id, long UnixMs)>(capacity: limit);
-        using (var read = conn.CreateCommand())
-        {
-            read.CommandText =
-                $"SELECT rowid, {col} FROM {table} " +
-                $"WHERE {col} > 0 AND {col} < {UnixMsCeiling.ToString(CultureInfo.InvariantCulture)} " +
-                $"LIMIT {limit}";
-            using var rdr = await read.ExecuteReaderAsync(ct);
-            while (await rdr.ReadAsync(ct))
-                pending.Add((rdr.GetInt64(0), rdr.GetInt64(1)));
-        }
+        var ceiling = UnixMsCeiling.ToString(CultureInfo.InvariantCulture);
 
-        if (pending.Count == 0) return 0;
+        // Single-statement re-encode in one implicit transaction. SQLite
+        // holds a write lock for the duration; readers proceed against the
+        // WAL snapshot. Concurrent writers (e.g. the enricher) queue for the
+        // length of the UPDATE — acceptable for a one-shot migration.
+        using var upd = conn.CreateCommand();
+        upd.CommandText =
+            $"UPDATE {table} " +
+            $"SET {col} = ({UnixEpochTicksDiv1000} + {col} * 10) * 2048 + {UtcOffsetEncodedBits} " +
+            $"WHERE {col} > 0 AND {col} < {ceiling}";
+        // Generous timeout: 2.3M-row update on shared-cpu-1x typically lands
+        // around 30-60s. Default 30s would trip mid-statement.
+        upd.CommandTimeout = (int)TimeSpan.FromMinutes(10).TotalSeconds;
 
-        using var tx = (SqliteTransaction)await conn.BeginTransactionAsync(ct);
-        using (var upd = conn.CreateCommand())
-        {
-            upd.Transaction = tx;
-            upd.CommandText = $"UPDATE {table} SET {col} = $v WHERE rowid = $r";
-            var pV = upd.CreateParameter(); pV.ParameterName = "$v"; upd.Parameters.Add(pV);
-            var pR = upd.CreateParameter(); pR.ParameterName = "$r"; upd.Parameters.Add(pR);
-            foreach (var (id, unixMs) in pending)
-            {
-                var dto = DateTimeOffset.FromUnixTimeMilliseconds(unixMs);
-                pV.Value = EncodeBinary(dto);
-                pR.Value = id;
-                await upd.ExecuteNonQueryAsync(ct);
-            }
-        }
-        await tx.CommitAsync(ct);
-        return pending.Count;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var rows = await upd.ExecuteNonQueryAsync(ct);
+        sw.Stop();
+
+        if (rows > 0)
+            _log.LogInformation("DateTimeOffset repair: {Table}.{Col} re-encoded {Count} row(s) in {Elapsed}.",
+                table, col, rows, sw.Elapsed);
+        return rows;
     }
 
     /// <summary>
