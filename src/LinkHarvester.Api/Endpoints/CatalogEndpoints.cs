@@ -41,12 +41,31 @@ public static class CatalogEndpoints
             if (ids.Count == 0)
                 return Results.Ok(new LookupResultDto(new()));
 
-            var titles = await db.CatalogTitles.AsNoTracking()
+            // Two-step load. EF's Include().ThenInclude() cartesian-products
+            // titles × episodes × episode-links, which for a single TV
+            // series with ~200 episodes × ~5 links per episode collapses the
+            // result set to 1000+ join rows per title × up to 25 titles =
+            // tens of thousands of rows to materialise. That's why /lookup
+            // was timing out (>30s) for any query that hit a series.
+            //
+            // Fix: pick the title IDs first (cheap), then load each title's
+            // relations as separate queries via AsSplitQuery. Per-title link
+            // counts go to disk individually instead of a join explosion.
+            var pickedIds = await db.CatalogTitles.AsNoTracking()
                 .Where(t => !t.IsHidden && ids.Contains(t.Id))
+                .OrderByDescending(t => t.LinkCount)
+                .Take(limit)
+                .Select(t => t.Id)
+                .ToListAsync(ct);
+            if (pickedIds.Count == 0)
+                return Results.Ok(new LookupResultDto(new()));
+
+            var titles = await db.CatalogTitles.AsNoTracking()
+                .Where(t => pickedIds.Contains(t.Id))
                 .Include(t => t.Metadata)
                 .Include(t => t.Links)
                 .Include(t => t.Episodes).ThenInclude(e => e.Links)
-                .Take(limit)
+                .AsSplitQuery()
                 .ToListAsync(ct);
 
             var s = settings.Current;
