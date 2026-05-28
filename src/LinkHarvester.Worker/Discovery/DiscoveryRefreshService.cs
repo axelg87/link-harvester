@@ -29,7 +29,7 @@ public sealed class DiscoveryRefreshService : BackgroundService
     private readonly TmdbClient _tmdb;
     private readonly TraktClient _trakt;
     private readonly LetterboxdPopularScraper _letterboxd;
-    private readonly PlexClient _plex;
+    private readonly IPlexClient _plex;
     private readonly ILogger<DiscoveryRefreshService> _log;
 
     public DiscoveryRefreshService(
@@ -38,7 +38,7 @@ public sealed class DiscoveryRefreshService : BackgroundService
         TmdbClient tmdb,
         TraktClient trakt,
         LetterboxdPopularScraper letterboxd,
-        PlexClient plex,
+        IPlexClient plex,
         ILogger<DiscoveryRefreshService> log)
     {
         _factory = factory;
