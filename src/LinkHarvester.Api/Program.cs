@@ -146,6 +146,11 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
+// DateTimeOffsetRepairService runs as a hosted service after startup; see
+// PersistenceServiceCollectionExtensions.AddCatalogIngestion. We don't
+// block startup on it because the bad-row count can be in the millions on
+// fresh-Hydracker databases and Fly's 60s grace period would kill us.
+
 app.UseSerilogRequestLogging(opts =>
 {
     // Don't drown the application log with Fly's 30-second health probes.
