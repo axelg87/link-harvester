@@ -11,53 +11,44 @@ namespace LinkHarvester.Persistence.Maintenance;
 /// <see cref="Catalog.CatalogIngestor"/> wrote via raw SQL as
 /// <c>ToUnixTimeMilliseconds()</c>.
 ///
-/// The schema uses EF Core's <c>DateTimeOffsetToBinaryConverter</c>, which
-/// packs the value as <c>((ticks/1000) &lt;&lt; 11) | ((offsetMinutes + 1024)
-/// &amp; 0x7FF)</c>. Reading a Unix-ms long back through that converter
-/// reinterprets the low 11 bits as offset minutes, lands outside the legal
-/// ±14 hour range about 18% of the time, and throws
-/// <c>ArgumentOutOfRangeException</c> on every read.
+/// EF Core's <c>DateTimeOffsetToBinaryConverter</c> packs the value as
+/// <c>((ticks/1000) &lt;&lt; 11) | ((offsetMinutes + 1024) &amp; 0x7FF)</c>.
+/// Reading a Unix-ms long back through that converter reinterprets the low
+/// 11 bits as offset minutes, lands outside the legal ±14 hour range about
+/// 18% of the time, and throws <c>ArgumentOutOfRangeException</c>.
 ///
 /// Affected columns: <c>CatalogTitles.FirstSeenAt</c>,
-/// <c>CatalogTitles.LastSeenAt</c>, <c>CatalogLinks.CreatedAt</c>
-/// (the heavy one — millions of rows).
+/// <c>CatalogTitles.LastSeenAt</c>, <c>CatalogLinks.CreatedAt</c>.
 ///
-/// Strategy: <b>one SQL <c>UPDATE</c> statement per column</b>. The
-/// encoding math is closed-form for UTC (every value Hydracker wrote was
-/// UTC since <c>DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()</c> discards
-/// the offset) and SQLite can do the entire 2.3M-row re-encode in a single
-/// transaction in under a minute. The previous batched-loop approach did a
-/// full table scan per 5k-row batch and took 30+ minutes while starving
-/// every other read of the SQLite cache.
+/// Strategy: one SQL UPDATE per column with a WHERE clause that catches
+/// <b>both</b> failure modes:
+///   1. Raw Unix-ms values (magnitude &lt; 10^15).
+///   2. Already-encoded values whose low 11 bits decode to an offset
+///      outside ±840 minutes (would throw on read). These shouldn't exist
+///      under normal write paths, but if a previous run of this service
+///      somehow produced one, this clause heals it.
 ///
-/// Runs as a background hosted service so a fresh deploy doesn't block
-/// startup. Idempotent — once a column has no rows below the magnitude
-/// threshold, the UPDATE is a no-op.
+/// The encoding math is closed-form for UTC values (the only kind Hydracker
+/// wrote, since <c>DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()</c>
+/// discards offset), so SQLite can do the re-encode entirely in a single
+/// UPDATE statement per column.
+///
+/// Runs as a background hosted service after a short startup delay.
+/// Idempotent — once everything's clean, subsequent boots match zero rows.
 /// </summary>
 public sealed class DateTimeOffsetRepairService : BackgroundService
 {
-    // Binary-encoded values for any plausible date are >> 10^17.
-    // Unix-ms values for any date from 1970-2100 are < 10^13.
-    private const long UnixMsCeiling = 1_000_000_000_000_000L; // 10^15
+    // Unix-ms values for any plausible date are well under 10^13;
+    // binary-encoded values for any plausible date are well over 10^17.
+    // A 10^15 ceiling cleanly separates them.
+    private const long UnixMsCeiling = 1_000_000_000_000_000L;
 
-    // Constants of the encoding identity for UTC offsets, derived from
-    // EncodeBinary's formula:
-    //
-    //   encoded = ((Ticks / 1000) << 11) | ((offsetMin + 1024) & 0x7FF)
-    //
-    // For DateTimeOffset.FromUnixTimeMilliseconds(unixMs) the offset is
-    // always TimeSpan.Zero, so offsetMin = 0 and (offsetMin + 1024) & 0x7FF = 1024.
-    //
-    //   Ticks = UnixEpochTicks + unixMs * TicksPerMillisecond
-    //         = 621355968000000000 + unixMs * 10000
-    //   Ticks / 1000 = 621355968000000 + unixMs * 10
-    //
-    // The low 11 bits of (Ticks / 1000) << 11 are zero, so OR-ing 1024
-    // is equivalent to addition:
-    //
-    //   encoded = (621355968000000 + unixMs * 10) * 2048 + 1024
-    //
-    // Used directly in the UPDATE statements below.
+    // The encoded-form WHERE has to detect rows whose low 11 bits decode
+    // out of range. EF stores `(offsetMin + 1024) & 0x7FF`; legal offsets
+    // are -840..+840 ⇒ stored bits 184..1864. Anything else throws.
+    private const long OffsetBitMin = 184;
+    private const long OffsetBitMax = 1864;
+
     private const long UnixEpochTicksDiv1000 = 621_355_968_000_000L;
     private const long UtcOffsetEncodedBits = 1024L;
 
@@ -81,27 +72,35 @@ public sealed class DateTimeOffsetRepairService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Let the API serve requests first — repair is best-effort.
-        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+        // Loudly announce the service started, so log triage can confirm it
+        // ran at all without needing to grep startup banner output.
+        _log.LogInformation("DateTimeOffset repair: service scheduled (5s startup delay).");
 
         try
         {
-            var totalFixed = 0L;
+            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+        }
+        catch (OperationCanceledException) { return; }
+
+        var grandTotal = 0L;
+        try
+        {
             foreach (var (table, col) in Columns)
             {
                 if (stoppingToken.IsCancellationRequested) return;
-                totalFixed += await RepairColumnAsync(table, col, stoppingToken);
+                grandTotal += await RepairColumnAsync(table, col, stoppingToken);
             }
 
-            if (totalFixed == 0)
-                _log.LogInformation("DateTimeOffset repair: database already clean.");
-            else
-                _log.LogInformation("DateTimeOffset repair: re-encoded {Count} row(s) total.", totalFixed);
+            // Final pass: log the leftover counts so a human reading logs
+            // can verify success without an admin endpoint.
+            await ReportLeftoversAsync(stoppingToken);
+
+            _log.LogInformation("DateTimeOffset repair: complete. Re-encoded {Total} row(s) across all columns.", grandTotal);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            _log.LogError(ex, "DateTimeOffset repair crashed; restart the app to retry.");
+            _log.LogError(ex, "DateTimeOffset repair crashed.");
         }
     }
 
@@ -112,28 +111,88 @@ public sealed class DateTimeOffsetRepairService : BackgroundService
         await conn.OpenAsync(ct);
 
         var ceiling = UnixMsCeiling.ToString(CultureInfo.InvariantCulture);
+        var (unixMs, badBits) = await CountAsync(conn, table, col, ceiling, ct);
 
-        // Single-statement re-encode in one implicit transaction. SQLite
-        // holds a write lock for the duration; readers proceed against the
-        // WAL snapshot. Concurrent writers (e.g. the enricher) queue for the
-        // length of the UPDATE — acceptable for a one-shot migration.
-        using var upd = conn.CreateCommand();
-        upd.CommandText =
+        if (unixMs == 0 && badBits == 0)
+        {
+            _log.LogInformation("DateTimeOffset repair: {Table}.{Col} clean (0 bad rows).", table, col);
+            return 0;
+        }
+
+        _log.LogInformation("DateTimeOffset repair: {Table}.{Col} has {Unix} unix-ms row(s) + {Bad} bad-offset row(s). Repairing…",
+            table, col, unixMs, badBits);
+
+        // 1) Re-encode raw Unix-ms values using the closed-form identity.
+        var swA = System.Diagnostics.Stopwatch.StartNew();
+        var fixedUnixMs = await ExecAsync(conn, ct,
             $"UPDATE {table} " +
             $"SET {col} = ({UnixEpochTicksDiv1000} + {col} * 10) * 2048 + {UtcOffsetEncodedBits} " +
-            $"WHERE {col} > 0 AND {col} < {ceiling}";
-        // Generous timeout: 2.3M-row update on shared-cpu-1x typically lands
-        // around 30-60s. Default 30s would trip mid-statement.
-        upd.CommandTimeout = (int)TimeSpan.FromMinutes(10).TotalSeconds;
+            $"WHERE {col} > 0 AND {col} < {ceiling}");
+        swA.Stop();
 
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var rows = await upd.ExecuteNonQueryAsync(ct);
-        sw.Stop();
+        // 2) Heal any row whose low 11 bits decode to an out-of-range offset
+        //    while the ticks portion looks plausible. Force-reset offset bits
+        //    to UTC (1024). The "wall clock" portion (high bits) is preserved.
+        //    These shouldn't exist normally; this is belt-and-suspenders.
+        var swB = System.Diagnostics.Stopwatch.StartNew();
+        var fixedBadBits = await ExecAsync(conn, ct,
+            $"UPDATE {table} " +
+            $"SET {col} = ({col} & ~2047) | {UtcOffsetEncodedBits} " +
+            $"WHERE {col} >= {ceiling} " +
+            $"  AND (({col} & 2047) < {OffsetBitMin} OR ({col} & 2047) > {OffsetBitMax})");
+        swB.Stop();
 
-        if (rows > 0)
-            _log.LogInformation("DateTimeOffset repair: {Table}.{Col} re-encoded {Count} row(s) in {Elapsed}.",
-                table, col, rows, sw.Elapsed);
-        return rows;
+        _log.LogInformation(
+            "DateTimeOffset repair: {Table}.{Col} re-encoded {Unix} unix-ms in {EA}, healed {Bad} bad-offset in {EB}.",
+            table, col, fixedUnixMs, swA.Elapsed, fixedBadBits, swB.Elapsed);
+
+        return fixedUnixMs + fixedBadBits;
+    }
+
+    private static async Task<long> ExecAsync(SqliteConnection conn, CancellationToken ct, string sql)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.CommandTimeout = (int)TimeSpan.FromMinutes(10).TotalSeconds;
+        return await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task<(long UnixMs, long BadBits)> CountAsync(
+        SqliteConnection conn, string table, string col, string ceiling, CancellationToken ct)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            $"SELECT " +
+            $"  SUM(CASE WHEN {col} > 0 AND {col} < {ceiling} THEN 1 ELSE 0 END), " +
+            $"  SUM(CASE WHEN {col} >= {ceiling} " +
+            $"           AND (({col} & 2047) < {OffsetBitMin} OR ({col} & 2047) > {OffsetBitMax}) " +
+            $"        THEN 1 ELSE 0 END) " +
+            $"FROM {table}";
+        cmd.CommandTimeout = 300;
+        using var rdr = await cmd.ExecuteReaderAsync(ct);
+        if (!await rdr.ReadAsync(ct)) return (0, 0);
+        long unixMs = rdr.IsDBNull(0) ? 0 : rdr.GetInt64(0);
+        long badBits = rdr.IsDBNull(1) ? 0 : rdr.GetInt64(1);
+        return (unixMs, badBits);
+    }
+
+    private async Task ReportLeftoversAsync(CancellationToken ct)
+    {
+        await using var db = await _factory.CreateDbContextAsync(ct);
+        var conn = (SqliteConnection)db.Database.GetDbConnection();
+        await conn.OpenAsync(ct);
+        var ceiling = UnixMsCeiling.ToString(CultureInfo.InvariantCulture);
+        var total = 0L;
+        foreach (var (table, col) in Columns)
+        {
+            var (u, b) = await CountAsync(conn, table, col, ceiling, ct);
+            total += u + b;
+            if (u != 0 || b != 0)
+                _log.LogWarning("DateTimeOffset repair: {Table}.{Col} STILL has {Unix} unix-ms + {Bad} bad-offset row(s) after repair.",
+                    table, col, u, b);
+        }
+        if (total == 0)
+            _log.LogInformation("DateTimeOffset repair: post-repair scan shows 0 bad rows. Database is clean.");
     }
 
     /// <summary>
