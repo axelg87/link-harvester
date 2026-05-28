@@ -115,12 +115,6 @@ using (var scope = app.Services.CreateScope())
     // share one source of truth.
     var startupLog = scope.ServiceProvider.GetRequiredService<ILoggerFactory>()
         .CreateLogger("Startup");
-    var promoter = scope.ServiceProvider.GetRequiredService<HarvesterCatalogPromoter>();
-    var promotedCount = await promoter.BackfillUnpromotedAsync(CancellationToken.None);
-    if (promotedCount > 0)
-    {
-        startupLog.LogInformation("promoted {Count} existing ZT article(s) into catalog", promotedCount);
-    }
 
     var resetCount = await EnrichmentMaintenance.ResetTransientFailedAsync(db, CancellationToken.None);
     if (resetCount > 0)
@@ -146,6 +140,34 @@ using (var scope = app.Services.CreateScope())
         startupLog.LogWarning("marked {Count} orphaned catalog import run(s) as failed (app restarted mid-ingest)", orphanedCount);
     }
 }
+
+// Promote any ZT articles that accumulated as un-promoted while the app
+// was down (or that the scanner adds later). Used to live inside the
+// startup scope above and run synchronously — but with several hundred
+// rows pending it blew through Fly's 60s health-check grace and the
+// machine entered a kill/restart loop with the backfill never finishing.
+// Per PromoteArticleAsync commits per-row via SaveChangesAsync, so an
+// interruption loses nothing — the next pass picks up where this one
+// left off. Fire-and-forget on a background task so Kestrel binds
+// 0.0.0.0:8080 in seconds; the backlog churns through quietly behind it.
+_ = Task.Run(async () =>
+{
+    using var bgScope = app.Services.CreateScope();
+    var log = bgScope.ServiceProvider.GetRequiredService<ILoggerFactory>()
+        .CreateLogger("StartupBackfill");
+    try
+    {
+        var promoter = bgScope.ServiceProvider.GetRequiredService<HarvesterCatalogPromoter>();
+        var promotedCount = await promoter.BackfillUnpromotedAsync(CancellationToken.None);
+        if (promotedCount > 0)
+            log.LogInformation("background-promoted {Count} existing ZT article(s) into catalog", promotedCount);
+    }
+    catch (Exception ex)
+    {
+        log.LogError(ex, "background promoter backfill failed");
+    }
+});
+
 
 
 app.UseSerilogRequestLogging(opts =>
