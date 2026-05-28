@@ -27,6 +27,11 @@ public sealed class SettingsFormModel
     public int TmdbEnrichmentConcurrency { get; set; } = 4;
     public string PlexBaseUrl { get; set; } = "";
     public string PlexToken { get; set; } = "";
+    public List<string> QualityPreference { get; set; } = new();
+    public string AudioPreference { get; set; } = "MULTI";
+    public string TraktClientId { get; set; } = "";
+    public string TelegramBotToken { get; set; } = "";
+    public long TelegramOwnerChatId { get; set; }
 
     public static SettingsFormModel From(Settings s) => new()
     {
@@ -48,7 +53,12 @@ public sealed class SettingsFormModel
         TmdbEnrichmentEnabled = s.TmdbEnrichmentEnabled,
         TmdbEnrichmentConcurrency = s.TmdbEnrichmentConcurrency,
         PlexBaseUrl = s.PlexBaseUrl,
-        PlexToken = ""
+        PlexToken = "",
+        QualityPreference = s.QualityPreference?.ToList() ?? new() { "REMUX", "BLURAY", "WEB-DL", "WEBRIP", "HDTV" },
+        AudioPreference = string.IsNullOrWhiteSpace(s.AudioPreference) ? "MULTI" : s.AudioPreference,
+        TraktClientId = "",
+        TelegramBotToken = "",
+        TelegramOwnerChatId = s.TelegramOwnerChatId
     };
 
     public UpdateSettings ToUpdate() => new(
@@ -70,7 +80,12 @@ public sealed class SettingsFormModel
         TmdbEnrichmentEnabled: TmdbEnrichmentEnabled,
         TmdbEnrichmentConcurrency: TmdbEnrichmentConcurrency,
         PlexBaseUrl: PlexBaseUrl,
-        PlexToken: PlexToken);
+        PlexToken: PlexToken,
+        QualityPreference: QualityPreference?.Where(q => !string.IsNullOrWhiteSpace(q)).ToList(),
+        AudioPreference: string.IsNullOrWhiteSpace(AudioPreference) ? null : AudioPreference,
+        TraktClientId: string.IsNullOrWhiteSpace(TraktClientId) ? null : TraktClientId,
+        TelegramBotToken: string.IsNullOrWhiteSpace(TelegramBotToken) ? null : TelegramBotToken,
+        TelegramOwnerChatId: TelegramOwnerChatId == 0 ? null : TelegramOwnerChatId);
 }
 
 /// <summary>

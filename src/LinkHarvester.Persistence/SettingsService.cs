@@ -30,7 +30,9 @@ public sealed class SettingsService : ISettingsService
         AuthPassword: "change-me",
         TmdbApiKey: "",
         TmdbEnrichmentEnabled: true,
-        TmdbEnrichmentConcurrency: 4);
+        TmdbEnrichmentConcurrency: 4,
+        QualityPreference: new[] { "REMUX", "BLURAY", "WEB-DL", "WEBRIP", "HDTV" },
+        AudioPreference: "MULTI");
 
     public SettingsService(IDbContextFactory<HarvesterDbContext> factory,
                            IDataProtectionProvider dpProvider,
@@ -83,6 +85,10 @@ public sealed class SettingsService : ISettingsService
         row.ScanOnStartup = updated.ScanOnStartup;
         row.HosterPriorityCsv = string.Join(',', (updated.HosterPriority ?? Array.Empty<string>())
             .Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()));
+        row.QualityPreferenceCsv = string.Join(',', (updated.QualityPreference ?? Array.Empty<string>())
+            .Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()));
+        row.AudioPreference = string.IsNullOrWhiteSpace(updated.AudioPreference)
+            ? "MULTI" : updated.AudioPreference.Trim().ToUpperInvariant();
 
         row.AuthUsername = string.IsNullOrWhiteSpace(updated.AuthUsername) ? row.AuthUsername : updated.AuthUsername;
         if (!string.IsNullOrEmpty(updated.AuthPassword))
@@ -96,6 +102,14 @@ public sealed class SettingsService : ISettingsService
         row.PlexBaseUrl = (updated.PlexBaseUrl ?? string.Empty).Trim().TrimEnd('/');
         if (!string.IsNullOrEmpty(updated.PlexToken))
             row.PlexTokenEncrypted = _protector.Protect(updated.PlexToken);
+
+        if (!string.IsNullOrEmpty(updated.TraktClientId))
+            row.TraktClientIdEncrypted = _protector.Protect(updated.TraktClientId);
+
+        if (!string.IsNullOrEmpty(updated.TelegramBotToken))
+            row.TelegramBotTokenEncrypted = _protector.Protect(updated.TelegramBotToken);
+        if (updated.TelegramOwnerChatId != 0)
+            row.TelegramOwnerChatId = updated.TelegramOwnerChatId;
 
         row.UpdatedAt = DateTimeOffset.UtcNow;
 
@@ -184,7 +198,15 @@ public sealed class SettingsService : ISettingsService
         SynologyResolvedBaseUrl: row.SynologyResolvedBaseUrl,
         SynologyResolvedAt: row.SynologyResolvedAt,
         PlexBaseUrl: row.PlexBaseUrl ?? string.Empty,
-        PlexToken: SafeUnprotect(row.PlexTokenEncrypted));
+        PlexToken: SafeUnprotect(row.PlexTokenEncrypted),
+        QualityPreference: string.IsNullOrEmpty(row.QualityPreferenceCsv)
+            ? new[] { "REMUX", "BLURAY", "WEB-DL", "WEBRIP", "HDTV" }
+            : row.QualityPreferenceCsv
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+        AudioPreference: string.IsNullOrEmpty(row.AudioPreference) ? "MULTI" : row.AudioPreference,
+        TraktClientId: SafeUnprotect(row.TraktClientIdEncrypted),
+        TelegramBotToken: SafeUnprotect(row.TelegramBotTokenEncrypted),
+        TelegramOwnerChatId: row.TelegramOwnerChatId);
 
     private string SafeUnprotect(string ciphertext)
     {

@@ -33,7 +33,12 @@ public static class SettingsEndpoints
                 TmdbEnrichmentEnabled: c.TmdbEnrichmentEnabled,
                 TmdbEnrichmentConcurrency: c.TmdbEnrichmentConcurrency,
                 PlexBaseUrl: c.PlexBaseUrl,
-                PlexTokenSet: !string.IsNullOrEmpty(c.PlexToken)
+                PlexTokenSet: !string.IsNullOrEmpty(c.PlexToken),
+                QualityPreference: c.QualityPreference.ToList(),
+                AudioPreference: c.AudioPreference,
+                TraktClientIdSet: !string.IsNullOrEmpty(c.TraktClientId),
+                TelegramBotTokenSet: !string.IsNullOrEmpty(c.TelegramBotToken),
+                TelegramOwnerChatId: c.TelegramOwnerChatId
             ));
         });
 
@@ -69,6 +74,11 @@ public static class SettingsEndpoints
                 TmdbEnrichmentConcurrency = req.TmdbEnrichmentConcurrency ?? current.TmdbEnrichmentConcurrency,
                 PlexBaseUrl = req.PlexBaseUrl ?? current.PlexBaseUrl,
                 PlexToken = string.IsNullOrEmpty(req.PlexToken) ? current.PlexToken : req.PlexToken,
+                QualityPreference = (req.QualityPreference is { Count: > 0 } ? req.QualityPreference : current.QualityPreference.ToList()),
+                AudioPreference = string.IsNullOrWhiteSpace(req.AudioPreference) ? current.AudioPreference : req.AudioPreference,
+                TraktClientId = string.IsNullOrEmpty(req.TraktClientId) ? current.TraktClientId : req.TraktClientId,
+                TelegramBotToken = string.IsNullOrEmpty(req.TelegramBotToken) ? current.TelegramBotToken : req.TelegramBotToken,
+                TelegramOwnerChatId = req.TelegramOwnerChatId ?? current.TelegramOwnerChatId,
             };
             await s.UpdateAsync(snapshot, ct);
             return Results.Ok();
@@ -131,7 +141,9 @@ public static class SettingsEndpoints
         int ScanIntervalMinutes, bool ScanOnStartup, List<string> HosterPriority,
         string AuthUsername, bool AuthPasswordSet,
         bool TmdbApiKeySet, bool TmdbEnrichmentEnabled, int TmdbEnrichmentConcurrency,
-        string PlexBaseUrl, bool PlexTokenSet);
+        string PlexBaseUrl, bool PlexTokenSet,
+        List<string> QualityPreference, string AudioPreference,
+        bool TraktClientIdSet, bool TelegramBotTokenSet, long TelegramOwnerChatId);
 
     public sealed record UpdateSettingsDto(
         string? SynologyBaseUrl, string? SynologyConnectionMode, string? SynologyQuickConnectId,
@@ -141,7 +153,9 @@ public static class SettingsEndpoints
         int? ScanIntervalMinutes, bool? ScanOnStartup, List<string>? HosterPriority,
         string? AuthUsername, string? AuthPassword,
         string? TmdbApiKey, bool? TmdbEnrichmentEnabled, int? TmdbEnrichmentConcurrency,
-        string? PlexBaseUrl, string? PlexToken);
+        string? PlexBaseUrl, string? PlexToken,
+        List<string>? QualityPreference, string? AudioPreference,
+        string? TraktClientId, string? TelegramBotToken, long? TelegramOwnerChatId);
 
     public sealed record ResolveQuickConnectDto(string? QuickConnectId);
 

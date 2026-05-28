@@ -24,6 +24,7 @@ public sealed class ScanPipeline
     private readonly IEnumerable<IFeedSource> _sources;
     private readonly IQualityScorer _scorer;
     private readonly HarvesterCatalogPromoter _catalogPromoter;
+    private readonly FollowingDetectionService _followingDetection;
     private readonly HarvesterOptions _opts;
     private readonly ILogger<ScanPipeline> _log;
 
@@ -31,6 +32,7 @@ public sealed class ScanPipeline
                          IEnumerable<IFeedSource> sources,
                          IQualityScorer scorer,
                          HarvesterCatalogPromoter catalogPromoter,
+                         FollowingDetectionService followingDetection,
                          IOptions<HarvesterOptions> opts,
                          ILogger<ScanPipeline> log)
     {
@@ -38,6 +40,7 @@ public sealed class ScanPipeline
         _sources = sources;
         _scorer = scorer;
         _catalogPromoter = catalogPromoter;
+        _followingDetection = followingDetection;
         _opts = opts.Value;
         _log = log;
     }
@@ -211,6 +214,11 @@ public sealed class ScanPipeline
         {
             _log.LogWarning(ex, "Could not promote article {ArticleId} to catalog.", article.Id);
         }
+
+        // Data-only Following detection — writes a row when this article
+        // brings an episode the user is already following but hasn't grabbed.
+        // No notification surface here; Telegram dispatcher consumes the log.
+        await _followingDetection.RegisterIngestedAsync(article.Id, ct);
 
         return existing is null;
     }

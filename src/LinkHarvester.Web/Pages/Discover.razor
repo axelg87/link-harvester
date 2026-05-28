@@ -1,0 +1,143 @@
+@page "/discover"
+@using LinkHarvester.Web.Models
+@using LinkHarvester.Web.Services
+@inject HarvesterApi Api
+
+<h2>Discover</h2>
+<p class="lh-page-help">Popular titles from TMDB, Trakt, Plex, and Letterboxd — filtered to only what's already in your catalog. Updated nightly.</p>
+
+<div class="lh-discover-controls">
+    <span class="lh-toggle-chip @(_kind == null ? "lh-toggle-chip--active" : "")" @onclick='() => SetKind(null)'>All</span>
+    <span class="lh-toggle-chip @(_kind == "movie" ? "lh-toggle-chip--active" : "")" @onclick='() => SetKind("movie")'>Movies</span>
+    <span class="lh-toggle-chip @(_kind == "tv" ? "lh-toggle-chip--active" : "")" @onclick='() => SetKind("tv")'>TV</span>
+    <span class="lh-toggle-chip @(_hideGrabbed ? "lh-toggle-chip--active" : "")" @onclick="ToggleHideGrabbed">Hide already grabbed</span>
+    <span class="lh-toggle-chip" style="margin-left:auto" @onclick="RefreshAsync">
+        @(_refreshing ? "Refreshing…" : "↻ Refresh now")
+    </span>
+</div>
+
+@if (_loading)
+{
+    <div>Loading…</div>
+}
+else if (_items.Count == 0)
+{
+    <p class="lh-page-help">
+        Nothing to discover yet. If you just enabled this, click "Refresh now" — the worker normally runs nightly.
+        Configure Trakt and Telegram in Settings to enable more sources.
+    </p>
+}
+else
+{
+    <div class="lh-discover-grid">
+        @foreach (var hit in _items)
+        {
+            <div class="lh-discover-card">
+                @if (!string.IsNullOrEmpty(hit.Poster))
+                {
+                    <img src="@hit.Poster" alt="" />
+                }
+                else
+                {
+                    <div class="lh-search-poster--placeholder" style="aspect-ratio:2/3">🎬</div>
+                }
+                <button class="lh-dc-send" disabled="@(_sending.Contains(hit.TitleId))" @onclick="() => SendAsync(hit)">
+                    @(_sending.Contains(hit.TitleId) ? "…" : "SEND")
+                </button>
+                <div class="lh-dc-meta">
+                    <div class="lh-dc-title">@hit.Title @(hit.Year is int y ? $"({y})" : "")</div>
+                    <div class="lh-dc-sub">
+                        @hit.BestLink.Quality · @hit.BestLink.Host
+                    </div>
+                    <div class="lh-dc-badges">
+                        @foreach (var src in hit.Sources.Take(3))
+                        {
+                            <span class="lh-dc-badge" title="@src.Reason">#@src.Rank @SourceLabel(src.Source)</span>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private List<DiscoveryHit> _items = new();
+    private bool _loading = true;
+    private bool _refreshing;
+    private string? _kind;
+    private bool _hideGrabbed = true;
+    private readonly HashSet<int> _sending = new();
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            var page = await Api.GetDiscoveryAsync(kind: _kind, hideAlreadyGrabbed: _hideGrabbed, limit: 96);
+            _items = page.Results;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (_refreshing) return;
+        _refreshing = true;
+        try
+        {
+            await Api.RefreshDiscoveryAsync();
+        }
+        finally
+        {
+            _refreshing = false;
+        }
+        await ReloadAsync();
+    }
+
+    private async Task SetKind(string? k)
+    {
+        _kind = k;
+        await ReloadAsync();
+    }
+
+    private async Task ToggleHideGrabbed()
+    {
+        _hideGrabbed = !_hideGrabbed;
+        await ReloadAsync();
+    }
+
+    private async Task SendAsync(DiscoveryHit hit)
+    {
+        if (!_sending.Add(hit.TitleId)) return;
+        StateHasChanged();
+        try
+        {
+            await Api.SendCatalogLinksAsync(new[] { hit.BestLink.LinkId });
+        }
+        catch { }
+        finally
+        {
+            _sending.Remove(hit.TitleId);
+            StateHasChanged();
+        }
+    }
+
+    private static string SourceLabel(string source) => source switch
+    {
+        "tmdb_top_rated_movie" => "TMDB Top",
+        "tmdb_popular_movie" => "TMDB Pop",
+        "tmdb_top_rated_tv" => "TMDB TV Top",
+        "tmdb_popular_tv" => "TMDB TV Pop",
+        "trakt_trending_movies" => "Trakt",
+        "trakt_trending_shows" => "Trakt TV",
+        "letterboxd_popular_week" => "Letterboxd",
+        "plex_most_watchlisted" => "Plex",
+        _ => source
+    };
+}

@@ -49,7 +49,9 @@ public sealed record Settings(
     int ScanIntervalMinutes, bool ScanOnStartup, List<string> HosterPriority,
     string AuthUsername, bool AuthPasswordSet,
     bool TmdbApiKeySet, bool TmdbEnrichmentEnabled, int TmdbEnrichmentConcurrency,
-    string PlexBaseUrl, bool PlexTokenSet);
+    string PlexBaseUrl, bool PlexTokenSet,
+    List<string> QualityPreference, string AudioPreference,
+    bool TraktClientIdSet, bool TelegramBotTokenSet, long TelegramOwnerChatId);
 
 public sealed record UpdateSettings(
     string? SynologyBaseUrl, string? SynologyConnectionMode, string? SynologyQuickConnectId,
@@ -59,7 +61,9 @@ public sealed record UpdateSettings(
     int? ScanIntervalMinutes, bool? ScanOnStartup, List<string>? HosterPriority,
     string? AuthUsername, string? AuthPassword,
     string? TmdbApiKey, bool TmdbEnrichmentEnabled, int TmdbEnrichmentConcurrency,
-    string? PlexBaseUrl, string? PlexToken);
+    string? PlexBaseUrl, string? PlexToken,
+    List<string>? QualityPreference = null, string? AudioPreference = null,
+    string? TraktClientId = null, string? TelegramBotToken = null, long? TelegramOwnerChatId = null);
 
 public sealed record SynologyTestResult(bool Ok, string? Error);
 
@@ -128,6 +132,29 @@ public sealed record IngestionStatus(string State, string? Description, IngestPr
 public sealed record IngestProgress(long Read, long Titles, long Episodes, long Links, long Failed);
 
 public sealed record CatalogSendResult(bool Ok, string? Error, List<string> TaskIds, int Submitted);
+
+// ── Top-bar lookup ──────────────────────────────────────────────────────
+public sealed record LookupLink(int LinkId, string? Quality, string? AudioLangs, string Host, long? SizeBytes);
+public sealed record LookupHit(
+    int TitleId, string Title, string Category, string? Poster, int? Year,
+    int LinkCount, int EpisodeCount, LookupLink? BestLink);
+public sealed record LookupResult(List<LookupHit> Results);
+
+// ── Following ────────────────────────────────────────────────────────────
+public sealed record FollowingItem(
+    int CatalogTitleId, string Title, string? Poster, string Category,
+    string? TmdbStatus, DateTimeOffset? LastAirDate,
+    DateTimeOffset? NextEpisodeAirDate, string? NextEpisodeCode,
+    DateTimeOffset? LastGrabbedAt,
+    List<string> GrabbedEpisodes, List<string> AvailableMissingEpisodes);
+
+// ── Discovery ───────────────────────────────────────────────────────────
+public sealed record DiscoverySource(string Source, int Rank, string Reason);
+public sealed record DiscoveryHit(
+    int TitleId, string Title, int? Year, string Category, string? Poster,
+    int LinkCount, LookupLink BestLink, List<DiscoverySource> Sources, bool AlreadyGrabbed);
+public sealed record DiscoveryPage(List<DiscoveryHit> Results);
+public sealed record DiscoveryRefreshSummary(int Tmdb, int Trakt, int Letterboxd, int Plex, int Pruned);
 
 public sealed record CatalogSearchQuery
 {

@@ -27,6 +27,10 @@ public class AppSettingsEntity
     public bool ScanOnStartup { get; set; } = true;
     /// <summary>Comma-separated ordered hoster priority list.</summary>
     public string HosterPriorityCsv { get; set; } = "1fichier,Rapidgator";
+    /// <summary>Comma-separated ordered quality preference (e.g. REMUX,BLURAY,WEB-DL,WEBRIP).</summary>
+    public string QualityPreferenceCsv { get; set; } = "REMUX,BLURAY,WEB-DL,WEBRIP,HDTV";
+    /// <summary>Preferred audio variant token used for "best variant" picking. One of MULTI, VFF, VFI, VOSTFR, VO.</summary>
+    public string AudioPreference { get; set; } = "MULTI";
 
     // Auth
     public string AuthUsername { get; set; } = "admin";
@@ -40,6 +44,14 @@ public class AppSettingsEntity
     // Plex (optional movie-inventory source)
     public string PlexBaseUrl { get; set; } = string.Empty;
     public string PlexTokenEncrypted { get; set; } = string.Empty;
+
+    // Discovery / Trakt (optional popularity source)
+    public string TraktClientIdEncrypted { get; set; } = string.Empty;
+
+    // Telegram bot (optional out-of-band channel)
+    public string TelegramBotTokenEncrypted { get; set; } = string.Empty;
+    /// <summary>Sole authorised chat. Bot drops updates from any other chat. Set via /start.</summary>
+    public long TelegramOwnerChatId { get; set; }
 
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

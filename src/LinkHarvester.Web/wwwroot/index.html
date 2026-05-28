@@ -40,6 +40,20 @@
             caches.keys().then(keys => keys.forEach(key => caches.delete(key)));
         }
     </script>
+    <script>
+        // Cmd/Ctrl+K → focus the top search bar from anywhere.
+        // The Blazor component registers itself by calling lhSearchInit with
+        // a DotNetObjectReference; we keep a singleton so a quick-K from a
+        // page with no search bar in scope is a no-op.
+        let __lhSearchRef = null;
+        window.lhSearchInit = (ref) => { __lhSearchRef = ref; };
+        window.addEventListener('keydown', (e) => {
+            const isCmdK = (e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K');
+            if (!isCmdK) return;
+            e.preventDefault();
+            if (__lhSearchRef) __lhSearchRef.invokeMethodAsync('FocusFromHotkey');
+        });
+    </script>
     <script src="_framework/blazor.webassembly.js"></script>
 </body>
 

@@ -10,6 +10,8 @@ public static class PersistenceServiceCollectionExtensions
     {
         services.AddSingleton<CatalogIngestor>();
         services.AddSingleton<HarvesterCatalogPromoter>();
+        services.AddSingleton<FollowingDetectionService>();
+        services.AddSingleton<FollowingService>();
         services.AddSingleton<CatalogIngestionRunner>();
         services.AddSingleton<ICatalogIngestionStatus>(sp => sp.GetRequiredService<CatalogIngestionRunner>());
         // Background repair for DateTimeOffset columns the Hydracker ingestor

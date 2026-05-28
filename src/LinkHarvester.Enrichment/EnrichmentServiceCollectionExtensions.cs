@@ -10,6 +10,14 @@ public static class EnrichmentServiceCollectionExtensions
         {
             c.DefaultRequestHeaders.UserAgent.ParseAdd("LinkHarvester/1.0 (+https://linkharvester.fly.dev)");
         });
+        services.AddHttpClient<TraktClient>(c =>
+        {
+            c.DefaultRequestHeaders.UserAgent.ParseAdd("LinkHarvester/1.0 (+https://linkharvester.fly.dev)");
+        });
+        services.AddHttpClient<LetterboxdPopularScraper>(c =>
+        {
+            c.DefaultRequestHeaders.UserAgent.ParseAdd("LinkHarvester/1.0 (+https://linkharvester.fly.dev)");
+        });
         services.AddSingleton<TmdbStatusTracker>();
         services.AddHostedService<TmdbEnricherService>();
         return services;

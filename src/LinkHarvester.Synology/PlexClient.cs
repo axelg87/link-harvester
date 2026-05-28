@@ -32,6 +32,12 @@ public interface IPlexClient
 
 public sealed record PlexMovie(string Title, int? Year);
 
+/// <summary>
+/// One result from Plex Discover (the public watchlist trending endpoint).
+/// Used by DiscoveryRefreshService to surface "most watchlisted on Plex."
+/// </summary>
+public sealed record PlexDiscoverEntry(string Title, int? Year, int? TmdbId, string? ImdbId);
+
 public sealed class PlexClient : IPlexClient
 {
     private readonly HttpClient _http;
@@ -96,6 +102,48 @@ public sealed class PlexClient : IPlexClient
         }
     }
 
+    /// <summary>
+    /// Best-effort fetch from Plex Discover's public watchlist trending feed.
+    /// Many tokens won't have the right scope and Plex returns 401 / empty;
+    /// callers must tolerate an empty result without surfacing it as an error.
+    /// </summary>
+    public async Task<IReadOnlyList<PlexDiscoverEntry>> FetchDiscoverWatchlistAsync(string token, CancellationToken ct)
+    {
+        // discover.provider.plex.tv exposes the cross-account watchlist
+        // trending feed. Endpoint name has shifted over the years; the
+        // /library/sections/watchlist/all path is the most stable one and
+        // returns JSON when Accept is set to application/json.
+        const string url = "https://discover.provider.plex.tv/library/sections/watchlist/all?type=1&sort=playCount:desc&limit=60";
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        req.Headers.Add("X-Plex-Token", token);
+        req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        using var resp = await _http.SendAsync(req, ct);
+        if (!resp.IsSuccessStatusCode) return Array.Empty<PlexDiscoverEntry>();
+
+        var body = await resp.Content.ReadFromJsonAsync<DiscoverResponse>(cancellationToken: ct);
+        if (body?.MediaContainer?.Metadata is null) return Array.Empty<PlexDiscoverEntry>();
+
+        var hits = new List<PlexDiscoverEntry>();
+        foreach (var m in body.MediaContainer.Metadata)
+        {
+            if (string.IsNullOrWhiteSpace(m.Title)) continue;
+            int? tmdbId = null;
+            string? imdbId = null;
+            if (m.Guid is { Count: > 0 } guids)
+            {
+                foreach (var g in guids)
+                {
+                    if (g.Id is not { } id) continue;
+                    if (id.StartsWith("tmdb://", StringComparison.OrdinalIgnoreCase)
+                        && int.TryParse(id["tmdb://".Length..], out var t)) tmdbId = t;
+                    else if (id.StartsWith("imdb://", StringComparison.OrdinalIgnoreCase)) imdbId = id["imdb://".Length..];
+                }
+            }
+            hits.Add(new PlexDiscoverEntry(m.Title!, m.Year, tmdbId, imdbId));
+        }
+        return hits;
+    }
+
     private async Task<T?> GetAsync<T>(AppSettingsSnapshot s, string path, CancellationToken ct)
     {
         var url = new Uri(new Uri(s.PlexBaseUrl.TrimEnd('/') + "/"), path.TrimStart('/'));
@@ -124,4 +172,12 @@ public sealed class PlexClient : IPlexClient
         [property: JsonPropertyName("type")] string? Type,
         [property: JsonPropertyName("title")] string? Title,
         [property: JsonPropertyName("year")] int? Year);
+
+    private sealed record DiscoverResponse([property: JsonPropertyName("MediaContainer")] DiscoverContainer? MediaContainer);
+    private sealed record DiscoverContainer([property: JsonPropertyName("Metadata")] List<DiscoverMetadata>? Metadata);
+    private sealed record DiscoverMetadata(
+        [property: JsonPropertyName("title")] string? Title,
+        [property: JsonPropertyName("year")] int? Year,
+        [property: JsonPropertyName("Guid")] List<DiscoverGuid>? Guid);
+    private sealed record DiscoverGuid([property: JsonPropertyName("id")] string? Id);
 }

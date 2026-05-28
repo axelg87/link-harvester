@@ -1,0 +1,109 @@
+@page "/following"
+@using LinkHarvester.Web.Models
+@using LinkHarvester.Web.Services
+@inject HarvesterApi Api
+
+<h2>Following</h2>
+<p class="lh-page-help">Shows you've ever submitted at least one episode of. No subscriptions to manage — your history drives this list.</p>
+
+@if (_loading)
+{
+    <div>Loading…</div>
+}
+else if (_items.Count == 0)
+{
+    <p class="lh-page-help">Submit an episode of any series and it'll appear here.</p>
+}
+else
+{
+    <div class="lh-following-list">
+        @foreach (var item in _items.Where(i => i.TmdbStatus != "Ended" || _showCompleted))
+        {
+            <div class="lh-following-card">
+                @if (!string.IsNullOrEmpty(item.Poster))
+                {
+                    <img src="@item.Poster" alt="" />
+                }
+                else
+                {
+                    <div class="lh-search-poster lh-search-poster--placeholder">📺</div>
+                }
+                <div class="lh-fc-body">
+                    <div class="lh-fc-title">@item.Title</div>
+                    <div class="lh-fc-sub">
+                        @if (!string.IsNullOrEmpty(item.TmdbStatus))
+                        {
+                            <span class="lh-pill @(StatusPillClass(item.TmdbStatus))">@item.TmdbStatus</span>
+                        }
+                        @if (item.AvailableMissingEpisodes.Count > 0)
+                        {
+                            <span class="lh-pill lh-pill--missing-now">
+                                @string.Join(", ", item.AvailableMissingEpisodes) available now
+                            </span>
+                        }
+                        @if (item.LastGrabbedAt is { } lg)
+                        {
+                            <span>· last grab @lg.LocalDateTime.ToString("MMM d, yyyy")</span>
+                        }
+                    </div>
+                    <div class="lh-fc-eps">
+                        @if (item.GrabbedEpisodes.Count > 0)
+                        {
+                            <text>Grabbed (@item.GrabbedEpisodes.Count): @string.Join(", ", item.GrabbedEpisodes)</text>
+                        }
+                        @if (item.NextEpisodeAirDate is { } nea)
+                        {
+                            <text> · next @(item.NextEpisodeCode ?? "?") airs @nea.LocalDateTime.ToString("MMM d, yyyy")</text>
+                        }
+                    </div>
+                </div>
+                <div class="lh-fc-actions">
+                    <a class="lh-btn-text" href="/catalog?titleId=@item.CatalogTitleId">open ↗</a>
+                    <button class="lh-btn-text" @onclick="() => DismissAsync(item.CatalogTitleId)" title="Stop following">✕ stop</button>
+                </div>
+            </div>
+        }
+    </div>
+
+    @if (_items.Any(i => i.TmdbStatus == "Ended") && !_showCompleted)
+    {
+        <button class="lh-btn-text" style="margin-top:12px" @onclick="() => _showCompleted = true">
+            Show completed (@_items.Count(i => i.TmdbStatus == "Ended"))
+        </button>
+    }
+}
+
+@code {
+    private List<FollowingItem> _items = new();
+    private bool _loading = true;
+    private bool _showCompleted = false;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        try
+        {
+            _items = await Api.GetFollowingAsync();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task DismissAsync(int titleId)
+    {
+        await Api.DismissFollowingAsync(titleId);
+        await ReloadAsync();
+    }
+
+    private static string StatusPillClass(string? status) => status switch
+    {
+        "Ended" => "lh-pill--ended",
+        "Canceled" => "lh-pill--canceled",
+        "Returning Series" or "In Production" or "Pilot" or "Planned" => "lh-pill--returning",
+        _ => "lh-pill--ended"
+    };
+}

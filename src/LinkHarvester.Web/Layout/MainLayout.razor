@@ -5,11 +5,17 @@
 <div class="lh-shell">
     <header class="lh-header">
         <div class="lh-brand">Link Harvester</div>
+        @if (_authChecked && _authed)
+        {
+            <TopSearchBar />
+        }
         <div class="lh-spacer"></div>
         @if (_authChecked && _authed)
         {
             <a class="lh-iconbtn" href="/" title="Inbox"><span class="lh-icon">✉</span></a>
             <a class="lh-iconbtn" href="/catalog" title="Catalog"><span class="lh-icon">🗂</span></a>
+            <a class="lh-iconbtn" href="/following" title="Following"><span class="lh-icon">⭑</span></a>
+            <a class="lh-iconbtn" href="/discover" title="Discover"><span class="lh-icon">★</span></a>
             <a class="lh-iconbtn" href="/history" title="History"><span class="lh-icon">↺</span></a>
             <a class="lh-iconbtn" href="/backfill" title="Backfill &amp; Health"><span class="lh-icon">⛏</span></a>
             <a class="lh-iconbtn" href="/settings" title="Settings">
