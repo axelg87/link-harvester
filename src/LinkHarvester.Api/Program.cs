@@ -113,7 +113,7 @@ using (var scope = app.Services.CreateScope())
     var preBootLog = scope.ServiceProvider.GetRequiredService<ILoggerFactory>()
         .CreateLogger("DateTimeOffsetRepair.PreBoot");
     var preBootFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<HarvesterDbContext>>();
-    await LinkHarvester.Persistence.Maintenance.DateTimeOffsetRepairService.RunAllAsync(
+    await LinkHarvester.Persistence.Maintenance.DateTimeOffsetRepairService.RunPreBootAsync(
         preBootFactory, preBootLog, CancellationToken.None);
 
     var settings = scope.ServiceProvider.GetRequiredService<ISettingsService>();
