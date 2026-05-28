@@ -141,43 +141,79 @@ public sealed class DateTimeOffsetRepairService : BackgroundService
     }
 
     /// <summary>
-    /// Single-row table — force its DateTimeOffset columns to known-good
-    /// encodings regardless of current state. Used when WHERE-based
-    /// detection has failed and we just need the app to boot.
+    /// Diagnostic-only for AppSettings — DOES NOT MODIFY THE ROW. Dumps
+    /// the schema (so we know exactly what columns EF will try to read)
+    /// plus every column's value + type for the existing row, so we can
+    /// see what's actually in there when EF keeps throwing despite our
+    /// counts reporting "0 bad". No DELETE, no UPDATE, no destructive
+    /// action against user-entered Synology / TMDB / Plex / auth state.
     /// </summary>
     private static async Task ForceResetAppSettingsAsync(
         HarvesterDbContext db, ILogger log, CancellationToken ct)
     {
-        // Forensics: log what we're about to overwrite. If the value really
-        // does decode to a bad offset, this is the first time we'll have
-        // ground truth on what's stored.
+        // 1. Schema dump — what columns does the live DB think AppSettings has?
         try
         {
-            var rows = await db.Database
-                .SqlQueryRaw<AppSettingsRawRow>(
-                    "SELECT Id AS Id, UpdatedAt AS UpdatedAt, SynologyResolvedAt AS SynologyResolvedAt FROM AppSettings")
+            var schema = await db.Database
+                .SqlQueryRaw<TableInfoRow>("SELECT name AS Name, type AS Type, [notnull] AS NotNull FROM pragma_table_info('AppSettings')")
                 .ToListAsync(ct);
-            foreach (var r in rows)
+            foreach (var c in schema)
+                log.LogInformation("AppSettings schema: {Name} {Type} {Nullable}", c.Name, c.Type, c.NotNull == 0 ? "NULL" : "NOT NULL");
+        }
+        catch (Exception ex) { log.LogWarning(ex, "AppSettings schema dump failed."); }
+
+        // 2. Raw row dump for every INTEGER column (where bad DateTimeOffset
+        //    bytes would hide). Read directly via SqliteDataReader so EF's
+        //    converter can't throw on us mid-dump.
+        try
+        {
+            var conn = (Microsoft.Data.Sqlite.SqliteConnection)db.Database.GetDbConnection();
+            if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync(ct);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT * FROM AppSettings";
+            using var rdr = await cmd.ExecuteReaderAsync(ct);
+            while (await rdr.ReadAsync(ct))
             {
-                log.LogInformation(
-                    "DateTimeOffset pre-boot: AppSettings row Id={Id} UpdatedAt={UpdatedAt} (low11={Low}), SynologyResolvedAt={Resolved}.",
-                    r.Id, r.UpdatedAt, r.UpdatedAt & 2047, r.SynologyResolvedAt?.ToString() ?? "NULL");
+                for (var i = 0; i < rdr.FieldCount; i++)
+                {
+                    var name = rdr.GetName(i);
+                    var declared = rdr.GetDataTypeName(i);
+                    if (rdr.IsDBNull(i)) { log.LogInformation("AppSettings row col {Name}={Type} NULL", name, declared); continue; }
+                    // Only inspect INTEGER cols — those are where the bad
+                    // DateTimeOffset bytes would be stored.
+                    if (declared.Equals("INTEGER", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var lv = rdr.GetInt64(i);
+                        log.LogInformation("AppSettings row col {Name}={Type} value={Val} (hex=0x{Hex:X16}, low11={Low})",
+                            name, declared, lv, lv, lv & 2047);
+                    }
+                    else
+                    {
+                        log.LogInformation("AppSettings row col {Name}={Type} (non-integer; not dumped)", name, declared);
+                    }
+                }
             }
         }
-        catch (Exception ex) { log.LogWarning(ex, "DateTimeOffset pre-boot: could not log AppSettings raw values."); }
+        catch (Exception ex) { log.LogWarning(ex, "AppSettings raw row dump failed."); }
 
-        var nowEncoded = EncodeBinary(DateTimeOffset.UtcNow);
-        var sql =
-            $"UPDATE AppSettings " +
-            $"SET UpdatedAt = {nowEncoded}, " +
-            $"    SynologyResolvedAt = CASE " +
-            $"      WHEN SynologyResolvedAt IS NULL THEN NULL " +
-            $"      WHEN SynologyResolvedAt >= 1000000000000000 " +
-            $"           AND ((SynologyResolvedAt & 2047) BETWEEN 184 AND 1864) " +
-            $"      THEN SynologyResolvedAt " +
-            $"      ELSE NULL END";
-        var n = await db.Database.ExecuteSqlRawAsync(sql, ct);
-        log.LogInformation("DateTimeOffset pre-boot: AppSettings UpdatedAt force-reset to {Encoded}; {N} row(s).", nowEncoded, n);
+        // 3. Probe via EF — log which materialiser-thrown column we hit, if any.
+        try
+        {
+            _ = await db.AppSettings.AsNoTracking().FirstOrDefaultAsync(ct);
+            log.LogInformation("AppSettings EF probe: OK (no force-reset needed).");
+        }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "AppSettings EF probe FAILED. App will crash on SettingsService.LoadAsync. " +
+                             "Check the raw row dump above to identify which INTEGER column has bad bits.");
+        }
+    }
+
+    public sealed class TableInfoRow
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Type { get; set; } = string.Empty;
+        public int NotNull { get; set; }
     }
 
     public sealed class AppSettingsRawRow
