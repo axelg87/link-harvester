@@ -303,7 +303,7 @@ public sealed class CatalogIngestor
         cmd.Parameters["$tmdb"].Value = (object?)rec.TmdbId ?? DBNull.Value;
         cmd.Parameters["$cat"].Value = rec.CategoryName ?? "Other";
         cmd.Parameters["$poster"].Value = (object?)rec.TitlePoster ?? DBNull.Value;
-        cmd.Parameters["$seen"].Value = Maintenance.DateTimeOffsetRepairService.EncodeBinary(DateTimeOffset.UtcNow);
+        cmd.Parameters["$seen"].Value = Maintenance.DateTimeOffsetEncoding.Encode(DateTimeOffset.UtcNow);
         var result = await cmd.ExecuteScalarAsync(ct);
         return Convert.ToInt32(result, CultureInfo.InvariantCulture);
     }
@@ -355,7 +355,7 @@ public sealed class CatalogIngestor
     {
         if (string.IsNullOrWhiteSpace(s)) return 0;
         if (DateTimeOffset.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var d))
-            return Maintenance.DateTimeOffsetRepairService.EncodeBinary(d);
+            return Maintenance.DateTimeOffsetEncoding.Encode(d);
         return 0;
     }
 

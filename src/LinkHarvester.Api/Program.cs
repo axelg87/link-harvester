@@ -103,19 +103,6 @@ using (var scope = app.Services.CreateScope())
     db.Database.Migrate();
     CatalogFts.EnsureCreated(db);
 
-    // CRITICAL: heal DateTimeOffset columns BEFORE any EF read. If
-    // AppSettings.UpdatedAt (or any other tracked column) has a value
-    // whose low 11 bits decode to an out-of-range offset, the next
-    // EF materialise throws ArgumentOutOfRangeException — and since
-    // SettingsService.LoadAsync is the first EF read, the app crashes
-    // at startup and Fly enters a restart loop with no recovery path.
-    // Running the repair before settings load makes the app self-healing.
-    var preBootLog = scope.ServiceProvider.GetRequiredService<ILoggerFactory>()
-        .CreateLogger("DateTimeOffsetRepair.PreBoot");
-    var preBootFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<HarvesterDbContext>>();
-    await LinkHarvester.Persistence.Maintenance.DateTimeOffsetRepairService.RunPreBootAsync(
-        preBootFactory, preBootLog, CancellationToken.None);
-
     var settings = scope.ServiceProvider.GetRequiredService<ISettingsService>();
     await settings.LoadAsync(CancellationToken.None);
 
@@ -160,10 +147,6 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-// DateTimeOffsetRepairService runs as a hosted service after startup; see
-// PersistenceServiceCollectionExtensions.AddCatalogIngestion. We don't
-// block startup on it because the bad-row count can be in the millions on
-// fresh-Hydracker databases and Fly's 60s grace period would kill us.
 
 app.UseSerilogRequestLogging(opts =>
 {
@@ -189,7 +172,6 @@ app.MapSettingsEndpoints();
 app.MapCatalogEndpoints();
 app.MapCatalogImportEndpoints();
 app.MapBackfillEndpoints();
-app.MapAdminEndpoints();
 app.MapSendHistoryEndpoints();
 
 app.MapFallbackToFile("index.html");
