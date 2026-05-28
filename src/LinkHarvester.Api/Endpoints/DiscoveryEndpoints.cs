@@ -37,11 +37,18 @@ public static class DiscoveryEndpoints
             if (raw.Count == 0) return Results.Ok(new DiscoveryPageDto(new()));
 
             var titleIds = raw.Select(d => d.CatalogTitleId).Distinct().ToList();
+            // Two-step load with AsSplitQuery — same reason as
+            // /api/catalog/lookup: Include().ThenInclude() on Episodes →
+            // episode-Links generates a cartesian join. A single series in
+            // the discovery set with ~200 episodes × ~5 links per episode
+            // alone produces ~1000 rows × N titles, large enough to make
+            // the worker unreachable to fly-proxy (PU03 in the wild).
             var titles = await db.CatalogTitles.AsNoTracking()
                 .Where(t => titleIds.Contains(t.Id) && !t.IsHidden)
                 .Include(t => t.Metadata)
                 .Include(t => t.Links)
                 .Include(t => t.Episodes).ThenInclude(e => e.Links)
+                .AsSplitQuery()
                 .ToListAsync(ct);
 
             // Already-grabbed lookup.
