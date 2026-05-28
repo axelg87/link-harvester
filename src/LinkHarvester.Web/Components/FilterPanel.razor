@@ -1,0 +1,28 @@
+@*
+    Shared collapsible filter wrapper used by /catalog and / (inbox). Plain
+    <details> under the hood; OpenByDefault picks the starting state. Caller
+    fills ChildContent with whatever filter form fits the page.
+
+    Why a component rather than inlining <details> twice: the chevron, the
+    "Filters · N active" header, and the responsive defaults stay in one
+    place if we want to evolve the chrome later.
+*@
+
+<details class="lh-filterpanel" open="@OpenByDefault">
+    <summary>
+        <span>
+            @Title
+            @if (ActiveCount > 0) { <span class="lh-muted">· @ActiveCount active</span> }
+        </span>
+    </summary>
+    <div class="lh-filterpanel-body">
+        @ChildContent
+    </div>
+</details>
+
+@code {
+    [Parameter] public string Title { get; set; } = "Filters";
+    [Parameter] public bool OpenByDefault { get; set; }
+    [Parameter] public int ActiveCount { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

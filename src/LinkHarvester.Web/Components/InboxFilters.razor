@@ -1,0 +1,56 @@
+@*
+    Lightweight client-side filter panel for /. Inbox returns the full
+    "items to review" set in one call, so filtering happens in memory rather
+    than via a server endpoint — Q matches DisplayTitle substring, Kind picks
+    one of the broad buckets.
+*@
+
+<div class="lh-filters">
+    <div class="lh-search">
+        <input type="text" placeholder="Search title…"
+               @bind="Query"
+               @bind:event="oninput"
+               @bind:after="Notify" />
+    </div>
+
+    <div class="lh-filter-group" style="border-top: none; padding-top: 0;">
+        <div style="font-weight: 600; padding: 4px 0; margin-bottom: 4px;">Kind</div>
+        @foreach (var (label, key) in _kinds)
+        {
+            <button class="@KindClass(key)" @onclick="() => SetKind(key)">@label</button>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public string? Query { get; set; }
+    [Parameter] public string? Kind { get; set; }
+    [Parameter] public EventCallback<string?> QueryChanged { get; set; }
+    [Parameter] public EventCallback<string?> KindChanged { get; set; }
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private readonly (string Label, string? Key)[] _kinds =
+    {
+        ("All", null),
+        ("Movies", "Movie"),
+        ("Series", "Season"),
+        ("Anime", "Anime"),
+    };
+
+    private string KindClass(string? key) =>
+        (Kind ?? "") == (key ?? "") ? "lh-chip lh-chip-on" : "lh-chip";
+
+    private async Task SetKind(string? k)
+    {
+        await KindChanged.InvokeAsync(k);
+        await OnChanged.InvokeAsync();
+    }
+
+    private Task Notify() => QueryChangedNotify();
+
+    private async Task QueryChangedNotify()
+    {
+        await QueryChanged.InvokeAsync(Query);
+        await OnChanged.InvokeAsync();
+    }
+}
