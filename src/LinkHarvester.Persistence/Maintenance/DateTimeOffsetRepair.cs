@@ -66,6 +66,7 @@ public sealed class DateTimeOffsetRepairService : BackgroundService
         ("HealthSweepRuns",       "StartedAt",         false),
         ("HealthSweepRuns",       "FinishedAt",        true),
         ("AppSettings",           "SynologyResolvedAt", true),
+        ("AppSettings",           "UpdatedAt",          false),
         // Catalog side — read by /api/catalog/* and /api/inbox via Metadata join.
         ("CatalogTitles",         "FirstSeenAt",       false),
         ("CatalogTitles",         "LastSeenAt",        false),
@@ -85,6 +86,25 @@ public sealed class DateTimeOffsetRepairService : BackgroundService
     {
         _factory = factory;
         _log = log;
+    }
+
+    /// <summary>
+    /// Synchronous full-table repair across all <see cref="Targets"/>.
+    /// Call this from <c>Program.cs</c> BEFORE any settings/EF read so a
+    /// single bad row in <c>AppSettings.UpdatedAt</c> (or any other tracked
+    /// column) doesn't crashloop the app.
+    /// </summary>
+    public static async Task RunAllAsync(
+        IDbContextFactory<HarvesterDbContext> factory, ILogger log, CancellationToken ct)
+    {
+        log.LogInformation("DateTimeOffset repair: starting synchronous pre-boot pass across {N} column(s).", Targets.Length);
+        var total = 0L;
+        await using var db = await factory.CreateDbContextAsync(ct);
+        foreach (var t in Targets)
+        {
+            total += await RepairAsync(db, t.Table, t.Column, t.Nullable, log, ct);
+        }
+        log.LogInformation("DateTimeOffset repair: pre-boot pass done. Re-encoded/healed {Total} row(s).", total);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
