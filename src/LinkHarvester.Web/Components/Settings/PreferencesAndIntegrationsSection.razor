@@ -1,0 +1,85 @@
+@*
+    Best-variant preferences (used by the universal search bar, Telegram /find,
+    and any future auto-grab path) + optional Discovery sources + Telegram bot
+    configuration. Grouped here because none of these need their own page.
+*@
+
+<section class="lh-section">
+    <h2>Best-variant preferences</h2>
+    <p class="lh-muted">
+        Used wherever the app picks one link automatically — top search bar,
+        Telegram /find, Discover page send button.
+    </p>
+
+    <label class="lh-field">
+        <span>Quality preference (comma-separated, best first)</span>
+        <InputText @bind-Value="QualityCsv" placeholder="REMUX,BLURAY,WEB-DL,WEBRIP,HDTV" />
+    </label>
+
+    <label class="lh-field">
+        <span>Audio preference</span>
+        <InputSelect @bind-Value="Form.AudioPreference">
+            <option value="MULTI">MULTI</option>
+            <option value="VFF">VFF</option>
+            <option value="VFI">VFI</option>
+            <option value="VOSTFR">VOSTFR</option>
+            <option value="VO">VO</option>
+        </InputSelect>
+    </label>
+</section>
+
+<section class="lh-section">
+    <h2>Trakt (optional discovery source)</h2>
+    <p class="lh-muted">
+        Provides "trending this week" rows on the Discover page. Free read-only
+        client id — no OAuth needed.
+        Get one at
+        <a href="https://trakt.tv/oauth/applications" target="_blank" rel="noopener">
+            trakt.tv/oauth/applications
+        </a>
+        → "New Application" → any redirect URL works → copy the client id.
+    </p>
+    <label class="lh-field">
+        <span>Trakt client id (leave blank to keep @(TraktSet ? "current" : "empty"))</span>
+        <InputText @bind-Value="Form.TraktClientId" autocomplete="off" />
+    </label>
+</section>
+
+<section class="lh-section">
+    <h2>Telegram bot (optional)</h2>
+    <p class="lh-muted">
+        DM the bot <code>/find &lt;query&gt;</code> from anywhere to search and
+        send. Also pushes "new episode available" alerts for shows you're
+        following.
+    </p>
+    <p class="lh-muted">
+        <strong>Setup:</strong> open Telegram → DM
+        <code>@@BotFather</code> → <code>/newbot</code> → choose name +
+        username (must end in "bot") → copy the token here. Then DM your bot
+        <code>/start</code> once — it'll reply with your chat id. Paste that
+        below.
+    </p>
+    <label class="lh-field">
+        <span>Bot token (leave blank to keep @(TelegramSet ? "current" : "empty"))</span>
+        <InputText @bind-Value="Form.TelegramBotToken" type="password" autocomplete="off"
+                   placeholder="123456:ABC-..." />
+    </label>
+    <label class="lh-field">
+        <span>Owner chat id (your personal chat with the bot)</span>
+        <InputNumber @bind-Value="Form.TelegramOwnerChatId" />
+    </label>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public SettingsFormModel Form { get; set; } = default!;
+    [Parameter] public bool TraktSet { get; set; }
+    [Parameter] public bool TelegramSet { get; set; }
+
+    private string QualityCsv
+    {
+        get => string.Join(',', Form.QualityPreference ?? new());
+        set => Form.QualityPreference = (value ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+    }
+}

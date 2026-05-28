@@ -402,6 +402,9 @@ public sealed class TmdbEnricherService : BackgroundService
         meta.OriginalLanguage = details.OriginalLanguage;
         meta.Overview = details.Overview;
         meta.Status = details.Status;
+        meta.LastAirDate = details.LastAirDate;
+        meta.NextEpisodeAirDate = details.NextEpisodeAirDate;
+        meta.NextEpisodeCode = details.NextEpisodeCode;
         meta.EnrichmentSource = source;
         meta.MetadataUncertain = string.Equals(source, "tmdb_search_uncertain", StringComparison.Ordinal);
         meta.LastEnrichedAt = DateTimeOffset.UtcNow;

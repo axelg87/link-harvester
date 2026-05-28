@@ -61,6 +61,11 @@
                 Form="_form"
                 TokenSet="@(_existing?.PlexTokenSet ?? false)" />
 
+            <PreferencesAndIntegrationsSection
+                Form="_form"
+                TraktSet="@(_existing?.TraktClientIdSet ?? false)"
+                TelegramSet="@(_existing?.TelegramBotTokenSet ?? false)" />
+
             <CatalogImportSection
                 ImportUrl="_importUrl"
                 ImportUrlChanged="@(v => _importUrl = v)"

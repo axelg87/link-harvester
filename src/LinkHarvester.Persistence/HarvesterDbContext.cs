@@ -23,6 +23,9 @@ public class HarvesterDbContext : DbContext
     public DbSet<CatalogImportRunEntity> CatalogImportRuns => Set<CatalogImportRunEntity>();
     public DbSet<BackfillRunEntity> BackfillRuns => Set<BackfillRunEntity>();
     public DbSet<HealthSweepRunEntity> HealthSweepRuns => Set<HealthSweepRunEntity>();
+    public DbSet<FollowingDismissalEntity> FollowingDismissals => Set<FollowingDismissalEntity>();
+    public DbSet<FollowingDetectionLogEntity> FollowingDetectionLog => Set<FollowingDetectionLogEntity>();
+    public DbSet<DiscoveryEntryEntity> DiscoveryEntries => Set<DiscoveryEntryEntity>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder cfg)
     {
@@ -207,6 +210,33 @@ public class HarvesterDbContext : DbContext
             e.Property(r => r.Status).HasMaxLength(16);
             e.Property(r => r.HosterFilter).HasMaxLength(64);
             e.Property(r => r.Error).HasMaxLength(1024);
+        });
+
+        b.Entity<FollowingDismissalEntity>(e =>
+        {
+            e.HasIndex(d => d.CatalogTitleId).IsUnique();
+        });
+
+        b.Entity<FollowingDetectionLogEntity>(e =>
+        {
+            e.HasIndex(d => d.CatalogTitleId);
+            e.HasIndex(d => new { d.ConsumedAt, d.DetectedAt });
+            // Detection is idempotent per (title, episode-code) — a re-ingest
+            // of the same article during backfill must not produce a second
+            // notification.
+            e.HasIndex(d => new { d.CatalogTitleId, d.EpisodeCode }).IsUnique();
+            e.Property(d => d.EpisodeCode).HasMaxLength(16);
+            e.Property(d => d.ConsumedBy).HasMaxLength(32);
+        });
+
+        b.Entity<DiscoveryEntryEntity>(e =>
+        {
+            // Replaceable: refresh worker upserts by (CatalogTitleId, Source).
+            e.HasIndex(d => new { d.CatalogTitleId, d.Source }).IsUnique();
+            e.HasIndex(d => new { d.Source, d.Rank });
+            e.HasIndex(d => d.FetchedAt);
+            e.Property(d => d.Source).HasMaxLength(48);
+            e.Property(d => d.Reason).HasMaxLength(128);
         });
     }
 }

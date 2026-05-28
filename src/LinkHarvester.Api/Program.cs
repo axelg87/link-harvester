@@ -173,6 +173,8 @@ app.MapCatalogEndpoints();
 app.MapCatalogImportEndpoints();
 app.MapBackfillEndpoints();
 app.MapSendHistoryEndpoints();
+app.MapFollowingEndpoints();
+app.MapDiscoveryEndpoints();
 
 app.MapFallbackToFile("index.html");
 

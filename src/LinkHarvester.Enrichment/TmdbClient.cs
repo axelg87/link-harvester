@@ -128,12 +128,51 @@ public sealed class TmdbClient
             }
             if (!string.IsNullOrEmpty(d.ReleaseDate) && d.ReleaseDate!.Length >= 4 && int.TryParse(d.ReleaseDate[..4], out var y))
                 d.Year = y;
+
+            if (isSeries)
+            {
+                if (root.TryGetProperty("last_air_date", out var lad) && lad.ValueKind == JsonValueKind.String
+                    && DateTimeOffset.TryParse(lad.GetString(), out var lastAir))
+                    d.LastAirDate = lastAir;
+                if (root.TryGetProperty("next_episode_to_air", out var nxt) && nxt.ValueKind == JsonValueKind.Object)
+                {
+                    if (nxt.TryGetProperty("air_date", out var nad) && nad.ValueKind == JsonValueKind.String
+                        && DateTimeOffset.TryParse(nad.GetString(), out var nextAir))
+                        d.NextEpisodeAirDate = nextAir;
+                    int? sNum = nxt.TryGetProperty("season_number", out var sn) && sn.ValueKind == JsonValueKind.Number ? sn.GetInt32() : null;
+                    int? eNum = nxt.TryGetProperty("episode_number", out var en) && en.ValueKind == JsonValueKind.Number ? en.GetInt32() : null;
+                    if (sNum.HasValue && eNum.HasValue)
+                        d.NextEpisodeCode = $"S{sNum.Value:D2}E{eNum.Value:D2}";
+                }
+            }
             return d;
         }
         catch
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Fetches a TMDB popularity/top-rated list (one page, 20 entries).
+    /// Used by DiscoveryRefreshWorker to surface "what's hot AND in catalog."
+    /// </summary>
+    public async Task<List<TmdbPopularEntry>> FetchPopularListAsync(
+        string list, bool isSeries, int page, string apiKey, CancellationToken ct)
+    {
+        // list ∈ { popular, top_rated, on_the_air, now_playing } per TMDB.
+        var kind = isSeries ? "tv" : "movie";
+        var url = $"{BaseUrl}/{kind}/{list}?page={page}&api_key={Uri.EscapeDataString(apiKey)}&language=en-US";
+        using var resp = await _http.GetAsync(url, ct);
+        if (resp.StatusCode == (HttpStatusCode)429)
+            throw new TmdbRateLimitException(resp.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(2));
+        if (!resp.IsSuccessStatusCode)
+        {
+            _log.LogWarning("TMDB {Kind}/{List} -> {Code}", kind, list, (int)resp.StatusCode);
+            return new();
+        }
+        var result = await resp.Content.ReadFromJsonAsync<TmdbPopularResult>(cancellationToken: ct);
+        return result?.Results ?? new();
     }
 
     private static int ScoreSearchResult(TmdbSearchEntry entry, string title, int? year, bool isSeries)
@@ -183,6 +222,27 @@ public sealed class TmdbDetails
     public string? Status { get; set; }
     public string? PosterUrl { get; set; }
     public List<string> Genres { get; set; } = new();
+    // Series-only — null for movies.
+    public DateTimeOffset? LastAirDate { get; set; }
+    public DateTimeOffset? NextEpisodeAirDate { get; set; }
+    public string? NextEpisodeCode { get; set; }
+}
+
+public sealed class TmdbPopularResult
+{
+    [JsonPropertyName("results")] public List<TmdbPopularEntry>? Results { get; set; }
+}
+
+public sealed class TmdbPopularEntry
+{
+    [JsonPropertyName("id")] public int Id { get; set; }
+    [JsonPropertyName("title")] public string? Title { get; set; }
+    [JsonPropertyName("name")] public string? Name { get; set; }
+    [JsonPropertyName("release_date")] public string? ReleaseDate { get; set; }
+    [JsonPropertyName("first_air_date")] public string? FirstAirDate { get; set; }
+    [JsonPropertyName("popularity")] public double Popularity { get; set; }
+    [JsonPropertyName("vote_average")] public double VoteAverage { get; set; }
+    public string ResolvedTitle => Title ?? Name ?? string.Empty;
 }
 
 public sealed class TmdbFindResult

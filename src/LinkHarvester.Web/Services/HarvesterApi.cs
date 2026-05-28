@@ -223,6 +223,54 @@ public sealed class HarvesterApi
 
     public async Task<List<RecentCatalogTitleDto>> GetRecentCatalogAsync(int take = 5, CancellationToken ct = default) =>
         (await _http.GetFromJsonAsync<List<RecentCatalogTitleDto>>($"api/backfill/recent?take={take}", ct)) ?? new();
+
+    // ── Top-bar universal lookup ──────────────────────────────────────────
+    public async Task<LookupResult> LookupCatalogAsync(string query, int limit = 10, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return new LookupResult(new());
+        var url = $"api/catalog/lookup?q={Uri.EscapeDataString(query)}&limit={limit}";
+        try
+        {
+            return (await _http.GetFromJsonAsync<LookupResult>(url, ct)) ?? new LookupResult(new());
+        }
+        catch (HttpRequestException)
+        {
+            return new LookupResult(new());
+        }
+    }
+
+    // ── Following ────────────────────────────────────────────────────────
+    public async Task<List<FollowingItem>> GetFollowingAsync(CancellationToken ct = default)
+        => (await _http.GetFromJsonAsync<List<FollowingItem>>("api/following", ct)) ?? new();
+
+    public async Task DismissFollowingAsync(int titleId, CancellationToken ct = default)
+    {
+        using var resp = await _http.PostAsync($"api/following/{titleId}/dismiss", null, ct);
+        resp.EnsureSuccessStatusCode();
+    }
+
+    public async Task UndismissFollowingAsync(int titleId, CancellationToken ct = default)
+    {
+        using var resp = await _http.PostAsync($"api/following/{titleId}/undismiss", null, ct);
+        resp.EnsureSuccessStatusCode();
+    }
+
+    // ── Discovery ────────────────────────────────────────────────────────
+    public async Task<DiscoveryPage> GetDiscoveryAsync(string? source = null, string? kind = null, bool hideAlreadyGrabbed = true, int limit = 60, CancellationToken ct = default)
+    {
+        var qs = new List<string> { $"limit={limit}", $"hideAlreadyGrabbed={(hideAlreadyGrabbed ? "true" : "false")}" };
+        if (!string.IsNullOrWhiteSpace(source)) qs.Add($"source={Uri.EscapeDataString(source)}");
+        if (!string.IsNullOrWhiteSpace(kind)) qs.Add($"kind={Uri.EscapeDataString(kind)}");
+        var url = "api/discover?" + string.Join('&', qs);
+        return (await _http.GetFromJsonAsync<DiscoveryPage>(url, ct)) ?? new DiscoveryPage(new());
+    }
+
+    public async Task<DiscoveryRefreshSummary> RefreshDiscoveryAsync(CancellationToken ct = default)
+    {
+        using var resp = await _http.PostAsync("api/discover/refresh", null, ct);
+        resp.EnsureSuccessStatusCode();
+        return (await resp.Content.ReadFromJsonAsync<DiscoveryRefreshSummary>(cancellationToken: ct))!;
+    }
 }
 
 public sealed record BackfillStatusDto(

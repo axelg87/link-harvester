@@ -113,6 +113,13 @@ public class CatalogTitleMetadataEntity
     public int Attempts { get; set; }
     public string? LastError { get; set; }
     public DateTimeOffset? LastEnrichedAt { get; set; }
+
+    // Series-only fields, populated for titles with a TV/anime category.
+    // Drive the Following page's "next episode" badge.
+    public DateTimeOffset? LastAirDate { get; set; }
+    public DateTimeOffset? NextEpisodeAirDate { get; set; }
+    /// <summary>Compact "S03E07" code for the next-to-air episode. Null when unknown.</summary>
+    public string? NextEpisodeCode { get; set; }
 }
 
 public class CatalogImportRunEntity

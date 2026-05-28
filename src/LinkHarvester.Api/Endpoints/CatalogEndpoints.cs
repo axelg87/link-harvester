@@ -19,6 +19,63 @@ public static class CatalogEndpoints
     {
         var grp = routes.MapGroup("/api/catalog").RequireAuthorization();
 
+        // ── Universal top-bar lookup ─────────────────────────────────────────
+        // Tight FTS5 + best-variant pick designed for the search-bar UX:
+        // returns at most N titles with a single inline-send target each.
+        // Distinct from /search (which powers the filtered Catalog page).
+        grp.MapGet("/lookup", async (
+            HarvesterDbContext db,
+            ISettingsService settings,
+            [FromQuery] string? q,
+            [FromQuery] int limit = 10,
+            CancellationToken ct = default) =>
+        {
+            limit = Math.Clamp(limit, 1, 25);
+            if (string.IsNullOrWhiteSpace(q) || q.Trim().Length < 2)
+                return Results.Ok(new LookupResultDto(new()));
+
+            var escaped = SanitizeFtsQuery(q);
+            var ids = await db.Database.SqlQueryRaw<int>(
+                "SELECT rowid AS Value FROM CatalogTitlesFts WHERE CatalogTitlesFts MATCH {0} LIMIT {1}",
+                escaped, limit * 4).ToListAsync(ct);
+            if (ids.Count == 0)
+                return Results.Ok(new LookupResultDto(new()));
+
+            var titles = await db.CatalogTitles.AsNoTracking()
+                .Where(t => !t.IsHidden && ids.Contains(t.Id))
+                .Include(t => t.Metadata)
+                .Include(t => t.Links)
+                .Include(t => t.Episodes).ThenInclude(e => e.Links)
+                .Take(limit)
+                .ToListAsync(ct);
+
+            var s = settings.Current;
+            var hits = titles.Select(t =>
+            {
+                // Best-variant ranking: pull all candidate links, prefer
+                // full-season packs for series with episodes, fall back to
+                // any link otherwise.
+                var allLinks = t.Links.Concat(t.Episodes.SelectMany(e => e.Links)).ToList();
+                var best = BestVariantPicker.Pick(allLinks, s.HosterPriority, s.EffectiveQualityPreference, s.AudioPreference);
+                LookupLinkDto? bestDto = best is null ? null : new LookupLinkDto(
+                    LinkId: best.Id,
+                    Quality: best.QualityName,
+                    AudioLangs: best.AudioLangs,
+                    Host: best.HostName,
+                    SizeBytes: best.SizeBytes);
+                return new LookupHitDto(
+                    TitleId: t.Id,
+                    Title: t.TitleName,
+                    Category: t.CategoryName,
+                    Poster: t.TitlePoster,
+                    Year: t.Metadata?.Year,
+                    LinkCount: t.LinkCount,
+                    EpisodeCount: t.EpisodeCount,
+                    BestLink: bestDto);
+            }).ToList();
+            return Results.Ok(new LookupResultDto(hits));
+        });
+
         // ── Browse ───────────────────────────────────────────────────────────
         grp.MapGet("/search", async (
             HarvesterDbContext db,
@@ -594,6 +651,14 @@ public static class CatalogEndpoints
         string Source, int? HarvesterArticleId);
 
     public sealed record FacetEntry(string Key, int Count);
+
+    public sealed record LookupLinkDto(int LinkId, string? Quality, string? AudioLangs, string Host, long? SizeBytes);
+
+    public sealed record LookupHitDto(
+        int TitleId, string Title, string Category, string? Poster,
+        int? Year, int LinkCount, int EpisodeCount, LookupLinkDto? BestLink);
+
+    public sealed record LookupResultDto(List<LookupHitDto> Results);
 
     public sealed record FacetsResponse(
         List<FacetEntry> Categories,

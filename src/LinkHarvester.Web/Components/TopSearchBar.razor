@@ -1,0 +1,221 @@
+@using LinkHarvester.Web.Models
+@using LinkHarvester.Web.Services
+@inject HarvesterApi Api
+@inject IJSRuntime JS
+
+<div class="lh-search @(_open ? "lh-search--open" : "")">
+    <div class="lh-search-input">
+        <span class="lh-search-glyph">🔎</span>
+        <input @ref="_inputRef"
+               type="text"
+               placeholder="Search catalog… (⌘K)"
+               value="@_query"
+               @oninput="OnInput"
+               @onfocus="OnFocus"
+               @onblur="OnBlur"
+               @onkeydown="OnKeyDown" />
+        @if (_pending)
+        {
+            <span class="lh-search-spinner" title="Searching…">…</span>
+        }
+    </div>
+    @if (_open && _query.Length >= 2)
+    {
+        <div class="lh-search-dropdown" @onmousedown:preventDefault="true">
+            @if (_results.Count == 0 && !_pending)
+            {
+                <div class="lh-search-empty">No matches.</div>
+            }
+            else
+            {
+                @for (var i = 0; i < _results.Count; i++)
+                {
+                    var idx = i;
+                    var hit = _results[idx];
+                    var cls = idx == _highlight ? "lh-search-row lh-search-row--active" : "lh-search-row";
+                    <div class="@cls" @onclick="() => SendHitAsync(hit)" @onmouseenter="() => _highlight = idx">
+                        @if (!string.IsNullOrEmpty(hit.Poster))
+                        {
+                            <img class="lh-search-poster" src="@hit.Poster" alt="" />
+                        }
+                        else
+                        {
+                            <div class="lh-search-poster lh-search-poster--placeholder">@(hit.EpisodeCount > 0 ? "📺" : "🎬")</div>
+                        }
+                        <div class="lh-search-meta">
+                            <div class="lh-search-title">@hit.Title @(hit.Year is int y ? $"({y})" : "")</div>
+                            <div class="lh-search-sub">
+                                @hit.Category · @hit.LinkCount link@(hit.LinkCount == 1 ? "" : "s")
+                                @if (hit.BestLink is not null)
+                                {
+                                    <text> · best: @(hit.BestLink.Quality ?? "?") · @hit.BestLink.Host</text>
+                                }
+                            </div>
+                        </div>
+                        @if (hit.BestLink is not null)
+                        {
+                            <button class="lh-search-send" disabled="@(_sending.Contains(hit.TitleId))" @onclick:stopPropagation="true" @onclick="() => SendHitAsync(hit)">
+                                @(_sending.Contains(hit.TitleId) ? "…" : "SEND")
+                            </button>
+                        }
+                    </div>
+                }
+            }
+        </div>
+    }
+    @if (!string.IsNullOrEmpty(_toast))
+    {
+        <div class="lh-search-toast @(_toastIsError ? "lh-search-toast--error" : "")">@_toast</div>
+    }
+</div>
+
+@code {
+    private ElementReference _inputRef;
+    private string _query = string.Empty;
+    private bool _open;
+    private bool _pending;
+    private int _highlight;
+    private string? _toast;
+    private bool _toastIsError;
+    private readonly HashSet<int> _sending = new();
+    private List<LookupHit> _results = new();
+    private CancellationTokenSource? _debounceCts;
+    private DotNetObjectReference<TopSearchBar>? _dotnetRef;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _dotnetRef = DotNetObjectReference.Create(this);
+            try { await JS.InvokeVoidAsync("lhSearchInit", _dotnetRef); } catch { /* ignore JS not loaded yet */ }
+        }
+    }
+
+    [JSInvokable]
+    public async Task FocusFromHotkey()
+    {
+        _open = true;
+        StateHasChanged();
+        try { await _inputRef.FocusAsync(); } catch { }
+    }
+
+    private async Task OnInput(ChangeEventArgs e)
+    {
+        _query = e.Value?.ToString() ?? string.Empty;
+        _open = true;
+        _highlight = 0;
+        await DebouncedSearchAsync();
+    }
+
+    private void OnFocus()
+    {
+        _open = true;
+    }
+
+    private async Task OnBlur()
+    {
+        // Close on blur after a short delay so click handlers fire first.
+        await Task.Delay(150);
+        _open = false;
+        StateHasChanged();
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (!_open) return;
+        if (e.Key == "Escape")
+        {
+            _open = false;
+        }
+        else if (e.Key == "ArrowDown" && _results.Count > 0)
+        {
+            _highlight = (_highlight + 1) % _results.Count;
+        }
+        else if (e.Key == "ArrowUp" && _results.Count > 0)
+        {
+            _highlight = (_highlight - 1 + _results.Count) % _results.Count;
+        }
+        else if (e.Key == "Enter" && _results.Count > 0)
+        {
+            await SendHitAsync(_results[_highlight]);
+        }
+    }
+
+    private async Task DebouncedSearchAsync()
+    {
+        _debounceCts?.Cancel();
+        _debounceCts = new CancellationTokenSource();
+        var ct = _debounceCts.Token;
+        try
+        {
+            await Task.Delay(150, ct);
+        }
+        catch (OperationCanceledException) { return; }
+        if (ct.IsCancellationRequested) return;
+        if (_query.Length < 2)
+        {
+            _results = new();
+            _pending = false;
+            StateHasChanged();
+            return;
+        }
+        _pending = true;
+        StateHasChanged();
+        try
+        {
+            var res = await Api.LookupCatalogAsync(_query, 10, ct);
+            if (!ct.IsCancellationRequested)
+            {
+                _results = res.Results;
+                _pending = false;
+                StateHasChanged();
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task SendHitAsync(LookupHit hit)
+    {
+        if (hit.BestLink is null) return;
+        if (!_sending.Add(hit.TitleId)) return;
+        StateHasChanged();
+        try
+        {
+            var result = await Api.SendCatalogLinksAsync(new[] { hit.BestLink.LinkId });
+            if (result.Ok)
+            {
+                _toast = $"Sent — {hit.Title} {hit.BestLink.Quality ?? ""}";
+                _toastIsError = false;
+            }
+            else
+            {
+                _toast = $"Failed: {result.Error ?? "unknown error"}";
+                _toastIsError = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _toast = $"Failed: {ex.Message}";
+            _toastIsError = true;
+        }
+        finally
+        {
+            _sending.Remove(hit.TitleId);
+            StateHasChanged();
+            _ = ClearToastAfterAsync(_toastIsError ? 8000 : 4000);
+        }
+    }
+
+    private async Task ClearToastAfterAsync(int ms)
+    {
+        await Task.Delay(ms);
+        _toast = null;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        _debounceCts?.Cancel();
+        _dotnetRef?.Dispose();
+    }
+}
