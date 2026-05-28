@@ -89,22 +89,119 @@ public sealed class DateTimeOffsetRepairService : BackgroundService
     }
 
     /// <summary>
-    /// Synchronous full-table repair across all <see cref="Targets"/>.
-    /// Call this from <c>Program.cs</c> BEFORE any settings/EF read so a
-    /// single bad row in <c>AppSettings.UpdatedAt</c> (or any other tracked
-    /// column) doesn't crashloop the app.
+    /// Synchronous PRE-BOOT pass. Runs from <c>Program.cs</c> before any
+    /// EF read (especially <see cref="SettingsService.LoadAsync"/>, which
+    /// is the first EF read at startup and the most common crashloop
+    /// trigger).
+    ///
+    /// Two responsibilities:
+    ///
+    /// <list type="number">
+    ///   <item><description>
+    ///     <b>Force-reset <c>AppSettings</c></b> DateTimeOffset columns.
+    ///     The table has exactly one row; we log its current raw long
+    ///     values for forensics, then unconditionally rewrite the row's
+    ///     <c>UpdatedAt</c> to a known-good encoded UtcNow. Diagnostic
+    ///     status counts have repeatedly reported "0 bad" while EF still
+    ///     throws on materialise, so we stop trusting WHERE clauses and
+    ///     just nuke the values. Cost: the <c>UpdatedAt</c> timestamp
+    ///     resets and any <c>SynologyResolvedAt</c> with bad bits gets
+    ///     nulled (QuickConnect will re-resolve). Both are recoverable.
+    ///   </description></item>
+    ///   <item><description>
+    ///     <b>Three-pass repair on small tables only</b>. The full pass
+    ///     on <c>CatalogLinks</c> (2.3M rows) takes ~3 minutes — blows
+    ///     Fly's 60s health-check grace and trips deploys. Small tables
+    ///     finish in seconds; <c>CatalogLinks</c> is left to the
+    ///     <see cref="BackgroundService"/> after Kestrel starts.
+    ///   </description></item>
+    /// </list>
+    /// </summary>
+    public static async Task RunPreBootAsync(
+        IDbContextFactory<HarvesterDbContext> factory, ILogger log, CancellationToken ct)
+    {
+        log.LogInformation("DateTimeOffset pre-boot: starting.");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await using var db = await factory.CreateDbContextAsync(ct);
+
+        await ForceResetAppSettingsAsync(db, log, ct);
+
+        // Run the 3-pass repair on every Target EXCEPT the giant CatalogLinks
+        // table. AppSettings columns are handled above (force-reset). All
+        // other tables are small enough to finish in seconds.
+        foreach (var t in Targets)
+        {
+            if (t.Table == "CatalogLinks") continue;          // deferred to BackgroundService
+            if (t.Table == "AppSettings") continue;           // already force-reset
+            await RepairAsync(db, t.Table, t.Column, t.Nullable, log, ct);
+        }
+
+        sw.Stop();
+        log.LogInformation("DateTimeOffset pre-boot: done in {Elapsed}. CatalogLinks deferred to BackgroundService.", sw.Elapsed);
+    }
+
+    /// <summary>
+    /// Single-row table — force its DateTimeOffset columns to known-good
+    /// encodings regardless of current state. Used when WHERE-based
+    /// detection has failed and we just need the app to boot.
+    /// </summary>
+    private static async Task ForceResetAppSettingsAsync(
+        HarvesterDbContext db, ILogger log, CancellationToken ct)
+    {
+        // Forensics: log what we're about to overwrite. If the value really
+        // does decode to a bad offset, this is the first time we'll have
+        // ground truth on what's stored.
+        try
+        {
+            var rows = await db.Database
+                .SqlQueryRaw<AppSettingsRawRow>(
+                    "SELECT Id AS Id, UpdatedAt AS UpdatedAt, SynologyResolvedAt AS SynologyResolvedAt FROM AppSettings")
+                .ToListAsync(ct);
+            foreach (var r in rows)
+            {
+                log.LogInformation(
+                    "DateTimeOffset pre-boot: AppSettings row Id={Id} UpdatedAt={UpdatedAt} (low11={Low}), SynologyResolvedAt={Resolved}.",
+                    r.Id, r.UpdatedAt, r.UpdatedAt & 2047, r.SynologyResolvedAt?.ToString() ?? "NULL");
+            }
+        }
+        catch (Exception ex) { log.LogWarning(ex, "DateTimeOffset pre-boot: could not log AppSettings raw values."); }
+
+        var nowEncoded = EncodeBinary(DateTimeOffset.UtcNow);
+        var sql =
+            $"UPDATE AppSettings " +
+            $"SET UpdatedAt = {nowEncoded}, " +
+            $"    SynologyResolvedAt = CASE " +
+            $"      WHEN SynologyResolvedAt IS NULL THEN NULL " +
+            $"      WHEN SynologyResolvedAt >= 1000000000000000 " +
+            $"           AND ((SynologyResolvedAt & 2047) BETWEEN 184 AND 1864) " +
+            $"      THEN SynologyResolvedAt " +
+            $"      ELSE NULL END";
+        var n = await db.Database.ExecuteSqlRawAsync(sql, ct);
+        log.LogInformation("DateTimeOffset pre-boot: AppSettings UpdatedAt force-reset to {Encoded}; {N} row(s).", nowEncoded, n);
+    }
+
+    public sealed class AppSettingsRawRow
+    {
+        public int Id { get; set; }
+        public long UpdatedAt { get; set; }
+        public long? SynologyResolvedAt { get; set; }
+    }
+
+    /// <summary>
+    /// Legacy entry point — kept for callers that want the full pass
+    /// across every column (e.g. an admin endpoint). Slow on CatalogLinks.
     /// </summary>
     public static async Task RunAllAsync(
         IDbContextFactory<HarvesterDbContext> factory, ILogger log, CancellationToken ct)
     {
-        log.LogInformation("DateTimeOffset repair: starting synchronous pre-boot pass across {N} column(s).", Targets.Length);
+        log.LogInformation("DateTimeOffset repair: starting full pass across {N} column(s).", Targets.Length);
         var total = 0L;
         await using var db = await factory.CreateDbContextAsync(ct);
         foreach (var t in Targets)
         {
             total += await RepairAsync(db, t.Table, t.Column, t.Nullable, log, ct);
         }
-        log.LogInformation("DateTimeOffset repair: pre-boot pass done. Re-encoded/healed {Total} row(s).", total);
+        log.LogInformation("DateTimeOffset repair: full pass done. Re-encoded/healed {Total} row(s).", total);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
