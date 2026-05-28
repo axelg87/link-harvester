@@ -27,7 +27,12 @@ public sealed record AppSettingsSnapshot(
     SynologyConnectionMode SynologyConnectionMode = SynologyConnectionMode.Direct,
     string SynologyQuickConnectId = "",
     string SynologyResolvedBaseUrl = "",
-    DateTimeOffset? SynologyResolvedAt = null)
+    DateTimeOffset? SynologyResolvedAt = null,
+    // Plex — optional. When set, used to answer "is this movie on disk?"
+    // for catalog items where the file lives flat in the movie root and
+    // filename matching is unreliable. Token is encrypted at rest.
+    string PlexBaseUrl = "",
+    string PlexToken = "")
 {
     public string EffectiveSynologyBaseUrl =>
         SynologyConnectionMode == SynologyConnectionMode.QuickConnect

@@ -57,6 +57,10 @@
                 OnRetryTransient="RetryTransientFailures"
                 OnRetryAll="RetryAllFailures" />
 
+            <PlexSettingsSection
+                Form="_form"
+                TokenSet="@(_existing?.PlexTokenSet ?? false)" />
+
             <CatalogImportSection
                 ImportUrl="_importUrl"
                 ImportUrlChanged="@(v => _importUrl = v)"

@@ -25,6 +25,8 @@ public sealed class SettingsFormModel
     public string TmdbApiKey { get; set; } = "";
     public bool TmdbEnrichmentEnabled { get; set; } = true;
     public int TmdbEnrichmentConcurrency { get; set; } = 4;
+    public string PlexBaseUrl { get; set; } = "";
+    public string PlexToken { get; set; } = "";
 
     public static SettingsFormModel From(Settings s) => new()
     {
@@ -44,7 +46,9 @@ public sealed class SettingsFormModel
         AuthPassword = "",
         TmdbApiKey = "",
         TmdbEnrichmentEnabled = s.TmdbEnrichmentEnabled,
-        TmdbEnrichmentConcurrency = s.TmdbEnrichmentConcurrency
+        TmdbEnrichmentConcurrency = s.TmdbEnrichmentConcurrency,
+        PlexBaseUrl = s.PlexBaseUrl,
+        PlexToken = ""
     };
 
     public UpdateSettings ToUpdate() => new(
@@ -64,7 +68,9 @@ public sealed class SettingsFormModel
         AuthPassword: AuthPassword,
         TmdbApiKey: TmdbApiKey,
         TmdbEnrichmentEnabled: TmdbEnrichmentEnabled,
-        TmdbEnrichmentConcurrency: TmdbEnrichmentConcurrency);
+        TmdbEnrichmentConcurrency: TmdbEnrichmentConcurrency,
+        PlexBaseUrl: PlexBaseUrl,
+        PlexToken: PlexToken);
 }
 
 /// <summary>

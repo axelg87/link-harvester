@@ -37,5 +37,9 @@ public class AppSettingsEntity
     public bool TmdbEnrichmentEnabled { get; set; } = true;
     public int TmdbEnrichmentConcurrency { get; set; } = 4;
 
+    // Plex (optional movie-inventory source)
+    public string PlexBaseUrl { get; set; } = string.Empty;
+    public string PlexTokenEncrypted { get; set; } = string.Empty;
+
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

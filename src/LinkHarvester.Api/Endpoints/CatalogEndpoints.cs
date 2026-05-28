@@ -225,23 +225,39 @@ public static class CatalogEndpoints
             HarvesterDbContext db,
             ISettingsService settings,
             IDownloadStationClient dsm,
+            IMovieInventoryService movies,
             CancellationToken ct) =>
         {
             var title = await db.CatalogTitles.AsNoTracking()
                 .Include(t => t.Episodes)
+                .Include(t => t.Metadata)
                 .FirstOrDefaultAsync(t => t.Id == id, ct);
             if (title is null) return Results.NotFound();
 
             var s = settings.Current;
-            // Inventory only makes sense for series/anime where the title has
-            // its own folder. Movies drop into a flat root mixed with other
-            // movies; listing it would return thousands of unrelated files.
             var isFolderedKind = string.Equals(title.CategoryName, "Animes", StringComparison.OrdinalIgnoreCase)
                               || string.Equals(title.CategoryName, "Séries", StringComparison.OrdinalIgnoreCase)
                               || string.Equals(title.CategoryName, "Series", StringComparison.OrdinalIgnoreCase);
+
+            // Movies live flat in /Films, so the per-folder strategy used for
+            // series doesn't apply. MovieInventoryService maintains a cached
+            // owned-set (Plex preferred, DSM filename heuristic fallback)
+            // keyed by (normalized title, year).
             if (!isFolderedKind)
             {
-                return Results.Ok(InventoryDto.Missing(string.Empty, null));
+                var year = title.Metadata?.Year;
+                var ownership = await movies.CheckAsync(title.NormalizedTitle, year, ct);
+                if (!ownership.Exists)
+                    return Results.Ok(InventoryDto.Missing(s.SynologyMovieDestination, null));
+                var file = new InventoryFileDto(
+                    Name: ownership.MatchedName ?? title.TitleName,
+                    SizeBytes: null,
+                    ModifiedAt: null);
+                return Results.Ok(new InventoryDto(
+                    Ok: true, Error: null, Exists: true,
+                    FolderPath: $"{s.SynologyMovieDestination} (via {ownership.Source})",
+                    SeasonNumber: null,
+                    Files: new() { file }));
             }
 
             var season = FirstSeasonNumber(title);
@@ -363,6 +379,7 @@ public static class CatalogEndpoints
             IDownloadStationClient dsm,
             ISettingsService settings,
             SubmissionService submissions,
+            IMovieInventoryService movies,
             CancellationToken ct) =>
         {
             if (req.LinkIds is null || req.LinkIds.Count == 0)
@@ -445,6 +462,9 @@ public static class CatalogEndpoints
                 attempt.DsmTaskIdsJson = JsonSerializer.Serialize(taskIds);
                 attempt.CompletedAt = DateTimeOffset.UtcNow;
                 await db.SaveChangesAsync(ct);
+                // What's on disk is about to change; drop the movie owned-set
+                // cache so the next inventory check refetches.
+                movies.Invalidate();
                 return Results.Ok(new SendResultDto(true, null, taskIds.ToList(), urls.Count));
             }
             catch (DsmException dx)

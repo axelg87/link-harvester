@@ -48,7 +48,8 @@ public sealed record Settings(
     string SynologyAnimeDestination,
     int ScanIntervalMinutes, bool ScanOnStartup, List<string> HosterPriority,
     string AuthUsername, bool AuthPasswordSet,
-    bool TmdbApiKeySet, bool TmdbEnrichmentEnabled, int TmdbEnrichmentConcurrency);
+    bool TmdbApiKeySet, bool TmdbEnrichmentEnabled, int TmdbEnrichmentConcurrency,
+    string PlexBaseUrl, bool PlexTokenSet);
 
 public sealed record UpdateSettings(
     string? SynologyBaseUrl, string? SynologyConnectionMode, string? SynologyQuickConnectId,
@@ -57,7 +58,8 @@ public sealed record UpdateSettings(
     string? SynologyAnimeDestination,
     int? ScanIntervalMinutes, bool? ScanOnStartup, List<string>? HosterPriority,
     string? AuthUsername, string? AuthPassword,
-    string? TmdbApiKey, bool TmdbEnrichmentEnabled, int TmdbEnrichmentConcurrency);
+    string? TmdbApiKey, bool TmdbEnrichmentEnabled, int TmdbEnrichmentConcurrency,
+    string? PlexBaseUrl, string? PlexToken);
 
 public sealed record SynologyTestResult(bool Ok, string? Error);
 
