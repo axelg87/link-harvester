@@ -102,6 +102,7 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<HarvesterDbContext>();
     db.Database.Migrate();
     CatalogFts.EnsureCreated(db);
+
     var settings = scope.ServiceProvider.GetRequiredService<ISettingsService>();
     await settings.LoadAsync(CancellationToken.None);
 
@@ -146,10 +147,6 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-// DateTimeOffsetRepairService runs as a hosted service after startup; see
-// PersistenceServiceCollectionExtensions.AddCatalogIngestion. We don't
-// block startup on it because the bad-row count can be in the millions on
-// fresh-Hydracker databases and Fly's 60s grace period would kill us.
 
 app.UseSerilogRequestLogging(opts =>
 {
