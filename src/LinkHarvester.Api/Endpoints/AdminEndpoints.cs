@@ -5,8 +5,8 @@ using Microsoft.EntityFrameworkCore;
 namespace LinkHarvester.Api.Endpoints;
 
 /// <summary>
-/// Diagnostic + manual-action endpoints. Auth-gated. Currently only the
-/// DateTimeOffset repair surface; will be deleted once stable.
+/// Operator-only endpoints for the DateTimeOffset repair surface. Will be
+/// removed in a cleanup PR once the data is stable.
 /// </summary>
 public static class AdminEndpoints
 {
@@ -14,8 +14,8 @@ public static class AdminEndpoints
     {
         var grp = routes.MapGroup("/api/admin").RequireAuthorization();
 
-        // Per-column count of rows in any of the 3 bad shapes. Uses the
-        // same Targets array as the BackgroundService.
+        // Pre-flight: per-column counts of rows in known-bad states. Single
+        // scan, no writes. Run BEFORE dto-repair-run to verify the model.
         grp.MapGet("/dto-repair-status", async (
             IDbContextFactory<HarvesterDbContext> factory,
             CancellationToken ct) =>
@@ -25,13 +25,15 @@ public static class AdminEndpoints
             foreach (var t in DateTimeOffsetRepairService.Targets)
             {
                 var c = await DateTimeOffsetRepairService.CountAsync(db, t.Table, t.Column, ct);
-                results.Add(new DtoRepairStatusEntry(t.Table, t.Column, t.Nullable, c.UnixMs, c.Zero, c.BadBits));
+                results.Add(new DtoRepairStatusEntry(t.Table, t.Column, t.Nullable, c.UnixMs, c.BadBits));
             }
-            var total = results.Sum(x => x.UnixMsRows + x.ZeroRows + x.BadOffsetRows);
-            return Results.Ok(new DtoRepairStatusDto(DateTimeOffset.UtcNow, total, results));
+            return Results.Ok(new DtoRepairStatusDto(
+                CheckedAt: DateTimeOffset.UtcNow,
+                TotalBadRows: results.Sum(x => x.UnixMsRows + x.BadOffsetRows),
+                Columns: results));
         });
 
-        // Manually trigger the repair synchronously.
+        // Manual full repair. Synchronous, returns per-column fixed counts.
         grp.MapPost("/dto-repair-run", async (
             IDbContextFactory<HarvesterDbContext> factory,
             ILoggerFactory loggerFactory,
@@ -44,9 +46,9 @@ public static class AdminEndpoints
             long total = 0;
             foreach (var t in DateTimeOffsetRepairService.Targets)
             {
-                var fixedRows = await DateTimeOffsetRepairService.RepairAsync(db, t.Table, t.Column, t.Nullable, log, ct);
-                total += fixedRows;
-                report.Add(new DtoRepairRunEntry(t.Table, t.Column, fixedRows));
+                var n = await DateTimeOffsetRepairService.RepairAsync(db, t.Table, t.Column, log, ct);
+                total += n;
+                report.Add(new DtoRepairRunEntry(t.Table, t.Column, n));
             }
             sw.Stop();
             log.LogInformation("Manual DateTimeOffset repair: re-encoded/healed {Total} row(s) in {Elapsed}.", total, sw.Elapsed);
@@ -57,8 +59,7 @@ public static class AdminEndpoints
     }
 
     public sealed record DtoRepairStatusEntry(
-        string Table, string Column, bool Nullable,
-        long UnixMsRows, long ZeroRows, long BadOffsetRows);
+        string Table, string Column, bool Nullable, long UnixMsRows, long BadOffsetRows);
 
     public sealed record DtoRepairStatusDto(
         DateTimeOffset CheckedAt, long TotalBadRows, List<DtoRepairStatusEntry> Columns);
