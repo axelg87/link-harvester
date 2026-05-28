@@ -4,7 +4,7 @@
    component just renders it and raises OnSearchChanged whenever the user
    tweaks something. *@
 
-<aside class="lh-filters">
+<div class="lh-filters">
     <div class="lh-search">
         <input type="text" placeholder="Search titles…"
                @bind="Query.Q" @bind:event="oninput" @onkeyup="OnSearchKeyUp" />
@@ -116,7 +116,7 @@
 
         <button class="lh-secondary lh-clear" @onclick="OnClearFilters">Clear filters</button>
     }
-</aside>
+</div>
 
 @code {
     [Parameter, EditorRequired] public CatalogSearchQuery Query { get; set; } = default!;

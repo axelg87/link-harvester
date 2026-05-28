@@ -461,25 +461,61 @@ input[type=checkbox] {
 
 .lh-catalog-body {
     display: grid;
-    grid-template-columns: 280px 1fr;
+    grid-template-columns: 280px minmax(0, 1fr);
     gap: 16px;
     align-items: start;
 }
 @media (max-width: 900px) {
-    .lh-catalog-body { grid-template-columns: 1fr; }
+    .lh-catalog-body { grid-template-columns: minmax(0, 1fr); }
 }
 
-.lh-filters {
+/* Collapsible wrapper used by both /catalog and / (inbox). Closed by
+   default on phone (saves vertical space when scrolling tiles), open on
+   tablet+. Using <details> for free state management. */
+.lh-filterpanel {
     background: var(--lh-surface);
     border: 1px solid var(--lh-border);
     border-radius: 14px;
-    padding: 12px;
+    overflow: hidden;
+    min-width: 0;
+}
+.lh-filterpanel > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 600;
+    color: var(--lh-text);
+    user-select: none;
+    -webkit-user-select: none;
+}
+.lh-filterpanel > summary::-webkit-details-marker { display: none; }
+.lh-filterpanel > summary::after {
+    content: "▾";
+    color: var(--lh-text-muted);
+    font-size: 0.9rem;
+    transition: transform 0.15s;
+}
+.lh-filterpanel[open] > summary::after { transform: rotate(180deg); }
+.lh-filterpanel-body { padding: 0 12px 12px; }
+
+.lh-filters {
+    /* min-width: 0 prevents intrinsic-min-content (long genre names or
+       wide number inputs) from blowing the grid track out and pushing the
+       page horizontally on phone. */
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 8px;
-    max-height: none;
-    overflow: visible;
-    position: static;
+}
+.lh-filters input[type=text],
+.lh-filters input[type=number] {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
 }
 .lh-search input {
     width: 100%;

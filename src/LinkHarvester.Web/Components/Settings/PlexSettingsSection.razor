@@ -1,0 +1,39 @@
+@*
+    Plex integration — optional. When set, the catalog uses Plex as the source
+    of truth for "is this movie on disk?" since Plex already parses titles
+    and years out of filenames more reliably than our regex fallback. Series
+    use the DSM folder walk regardless.
+*@
+
+<section class="lh-section">
+    <h2>Plex (movie ownership)</h2>
+    <p class="lh-muted">
+        Optional. Configure once and the catalog can tell which movies you
+        already have. Without Plex, we fall back to parsing your
+        <code>@Form.SynologyMovieDestination</code> folder filenames — works
+        for clean scene releases, miss-prone for unusual names.
+    </p>
+    <p class="lh-muted">
+        Token: open Plex web → settings → any item → ⋯ → Get Info → View XML;
+        the URL has <code>X-Plex-Token=…</code> at the end. Or
+        <a href="https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/"
+           target="_blank" rel="noopener">see the official guide</a>.
+    </p>
+
+    <label class="lh-field">
+        <span>Plex base URL</span>
+        <InputText @bind-Value="Form.PlexBaseUrl"
+                   placeholder="http://192.168.1.50:32400"
+                   autocomplete="off" />
+    </label>
+
+    <label class="lh-field">
+        <span>Plex token (leave blank to keep @(TokenSet ? "current" : "empty"))</span>
+        <InputText @bind-Value="Form.PlexToken" type="password" autocomplete="off" />
+    </label>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public SettingsFormModel Form { get; set; } = default!;
+    [Parameter] public bool TokenSet { get; set; }
+}

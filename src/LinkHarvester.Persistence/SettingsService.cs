@@ -93,6 +93,10 @@ public sealed class SettingsService : ISettingsService
         row.TmdbEnrichmentEnabled = updated.TmdbEnrichmentEnabled;
         row.TmdbEnrichmentConcurrency = Math.Clamp(updated.TmdbEnrichmentConcurrency, 1, 8);
 
+        row.PlexBaseUrl = (updated.PlexBaseUrl ?? string.Empty).Trim().TrimEnd('/');
+        if (!string.IsNullOrEmpty(updated.PlexToken))
+            row.PlexTokenEncrypted = _protector.Protect(updated.PlexToken);
+
         row.UpdatedAt = DateTimeOffset.UtcNow;
 
         if (row.Id == 0 || !await db.AppSettings.AnyAsync(s => s.Id == row.Id, ct))
@@ -178,7 +182,9 @@ public sealed class SettingsService : ISettingsService
             : SynologyConnectionMode.Direct,
         SynologyQuickConnectId: row.SynologyQuickConnectId,
         SynologyResolvedBaseUrl: row.SynologyResolvedBaseUrl,
-        SynologyResolvedAt: row.SynologyResolvedAt);
+        SynologyResolvedAt: row.SynologyResolvedAt,
+        PlexBaseUrl: row.PlexBaseUrl ?? string.Empty,
+        PlexToken: SafeUnprotect(row.PlexTokenEncrypted));
 
     private string SafeUnprotect(string ciphertext)
     {

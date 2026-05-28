@@ -27,6 +27,7 @@
     <ProjectReference Include="..\..\src\LinkHarvester.Api\LinkHarvester.Api.csproj" />
     <ProjectReference Include="..\..\src\LinkHarvester.Persistence\LinkHarvester.Persistence.csproj" />
     <ProjectReference Include="..\..\src\LinkHarvester.Core\LinkHarvester.Core.csproj" />
+    <ProjectReference Include="..\..\src\LinkHarvester.Synology\LinkHarvester.Synology.csproj" />
   </ItemGroup>
 
 </Project>

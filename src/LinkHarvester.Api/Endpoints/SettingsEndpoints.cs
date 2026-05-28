@@ -31,7 +31,9 @@ public static class SettingsEndpoints
                 AuthPasswordSet: !string.IsNullOrEmpty(c.AuthPassword),
                 TmdbApiKeySet: !string.IsNullOrEmpty(c.TmdbApiKey),
                 TmdbEnrichmentEnabled: c.TmdbEnrichmentEnabled,
-                TmdbEnrichmentConcurrency: c.TmdbEnrichmentConcurrency
+                TmdbEnrichmentConcurrency: c.TmdbEnrichmentConcurrency,
+                PlexBaseUrl: c.PlexBaseUrl,
+                PlexTokenSet: !string.IsNullOrEmpty(c.PlexToken)
             ));
         });
 
@@ -64,7 +66,9 @@ public static class SettingsEndpoints
                 AuthPassword = string.IsNullOrEmpty(req.AuthPassword) ? current.AuthPassword : req.AuthPassword,
                 TmdbApiKey = string.IsNullOrEmpty(req.TmdbApiKey) ? current.TmdbApiKey : req.TmdbApiKey,
                 TmdbEnrichmentEnabled = req.TmdbEnrichmentEnabled ?? current.TmdbEnrichmentEnabled,
-                TmdbEnrichmentConcurrency = req.TmdbEnrichmentConcurrency ?? current.TmdbEnrichmentConcurrency
+                TmdbEnrichmentConcurrency = req.TmdbEnrichmentConcurrency ?? current.TmdbEnrichmentConcurrency,
+                PlexBaseUrl = req.PlexBaseUrl ?? current.PlexBaseUrl,
+                PlexToken = string.IsNullOrEmpty(req.PlexToken) ? current.PlexToken : req.PlexToken,
             };
             await s.UpdateAsync(snapshot, ct);
             return Results.Ok();
@@ -126,7 +130,8 @@ public static class SettingsEndpoints
         string SynologyAnimeDestination,
         int ScanIntervalMinutes, bool ScanOnStartup, List<string> HosterPriority,
         string AuthUsername, bool AuthPasswordSet,
-        bool TmdbApiKeySet, bool TmdbEnrichmentEnabled, int TmdbEnrichmentConcurrency);
+        bool TmdbApiKeySet, bool TmdbEnrichmentEnabled, int TmdbEnrichmentConcurrency,
+        string PlexBaseUrl, bool PlexTokenSet);
 
     public sealed record UpdateSettingsDto(
         string? SynologyBaseUrl, string? SynologyConnectionMode, string? SynologyQuickConnectId,
@@ -135,7 +140,8 @@ public static class SettingsEndpoints
         string? SynologyAnimeDestination,
         int? ScanIntervalMinutes, bool? ScanOnStartup, List<string>? HosterPriority,
         string? AuthUsername, string? AuthPassword,
-        string? TmdbApiKey, bool? TmdbEnrichmentEnabled, int? TmdbEnrichmentConcurrency);
+        string? TmdbApiKey, bool? TmdbEnrichmentEnabled, int? TmdbEnrichmentConcurrency,
+        string? PlexBaseUrl, string? PlexToken);
 
     public sealed record ResolveQuickConnectDto(string? QuickConnectId);
 

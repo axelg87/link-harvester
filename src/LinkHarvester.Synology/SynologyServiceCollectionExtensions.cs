@@ -31,6 +31,16 @@ public static class SynologyServiceCollectionExtensions
                 sp.GetRequiredService<IQuickConnectEndpointService>(),
                 sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DownloadStationClient>>());
         });
+        services.AddHttpClient(nameof(PlexClient));
+        services.AddSingleton<IPlexClient>(sp =>
+        {
+            var http = sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(PlexClient));
+            return new PlexClient(
+                http,
+                sp.GetRequiredService<ISettingsService>(),
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PlexClient>>());
+        });
+        services.AddSingleton<IMovieInventoryService, MovieInventoryService>();
         return services;
     }
 }
