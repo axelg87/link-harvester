@@ -1,4 +1,5 @@
 using System.Globalization;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -6,49 +7,61 @@ using Microsoft.Extensions.Logging;
 namespace LinkHarvester.Persistence.Maintenance;
 
 /// <summary>
-/// One-shot repair for DateTimeOffset columns whose long-encoded value
-/// can't round-trip through EF Core's <c>DateTimeOffsetToBinaryConverter</c>
-/// (low 11 bits decode to an offset outside ±840 minutes, throwing
-/// <c>ArgumentOutOfRangeException</c>). EF reads materialise every column
-/// on an entity, so one bad row in one column 500s the whole endpoint.
+/// Recovers DateTimeOffset columns from two compounding bugs:
 ///
-/// Three failure modes per column, all handled here:
+///   1. <b>Hydracker original bug</b>: the catalog ingestor wrote
+///      <c>DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()</c> via raw SQL
+///      into columns EF expects in its binary-packed form. EF reads the
+///      raw unix-ms back, decodes its low 11 bits as a signed-11-bit
+///      offset (~18% of values land outside ±14h), throws
+///      <c>ArgumentOutOfRangeException</c>.
 ///
-///  1. Raw Unix-ms (Hydracker ingestor's original bug — wrote
-///     <c>ToUnixTimeMilliseconds()</c> via raw SQL into a column EF
-///     expects in binary-encoded form).
+///   2. <b>The repair bug I introduced and shipped across PRs #20-#26</b>:
+///      my <c>EncodeBinary</c> helper packed the offset as
+///      <c>(offsetMin + 1024) &amp; 0x7FF</c>. The real EF Core 8 converter
+///      packs it as <c>(long)offsetMin &amp; 0x7FF</c> — two's-complement
+///      signed-11-bit, no bias. For UTC writes my code stored
+///      <c>low11 = 1024</c>; EF decoded that as <c>-1024 min</c>, the same
+///      out-of-range failure mode. Every row my repair "healed" — every
+///      Hydracker fix AND every legitimate EF-written row that my buggy
+///      bad-offset detector swept in — landed with <c>low11 = 1024</c>
+///      and now throws on read.
 ///
-///  2. Stored value of <c>0</c>. SQLite default for an INTEGER column
-///     when a NOT NULL column was added via migration with no DEFAULT —
-///     existing rows backfill to 0. EF reads 0 as
-///     <c>offset = (0 &amp; 0x7FF) - 1024 = -1024 minutes</c> → throw.
-///     Fix: set to <c>1024</c> (epoch UTC) for non-nullable columns, or
-///     to NULL for nullable columns (where 0 was likely meant to be
-///     "not set").
+/// The recovery exploits one fact: my buggy heal preserved the
+/// <i>ticks</i> portion of every value (the high 53 bits). Only the low
+/// 11 bits (offset) were corrupted. Clearing those low bits leaves the
+/// original date intact with offset = UTC. No date data is lost.
 ///
-///  3. Already-encoded form (≥ 10^15) but with low 11 bits decoding
-///     outside ±840 minutes. Heal preserves wall-clock ticks and pins
-///     offset to UTC: <c>(col &amp; ~2047) | 1024</c>.
+/// EF Core 8 reference (verified against
+/// dotnet/efcore@v8.0.10/src/EFCore/Storage/ValueConversion/DateTimeOffsetToBinaryConverter.cs):
 ///
-/// Targets cover every <c>DateTimeOffset</c> / <c>DateTimeOffset?</c>
-/// column EF materialises across the inbox + catalog + harvester reads.
+///   encode: <c>((v.Ticks / 1000) &lt;&lt; 11) | ((long)v.Offset.TotalMinutes &amp; 0x7FF)</c>
+///   decode: <c>new(new DateTime((v &gt;&gt; 11) * 1000), new TimeSpan(0, (int)((v &lt;&lt; 53) &gt;&gt; 53), 0))</c>
+///
+/// Legal stored low-11-bit ranges (decode succeeds):
+///   <c>[0, 840]</c>    — positive offsets 0…+840 min
+///   <c>[1208, 2047]</c> — negative offsets −840…−1 min (two's complement)
+///
+/// Illegal: <c>[841, 1207]</c> — would decode to an offset outside ±14h.
+/// My buggy repair's signature is <c>low11 = 1024</c>, smack in the
+/// middle of the illegal band.
 /// </summary>
 public sealed class DateTimeOffsetRepairService : BackgroundService
 {
+    // unix-ms values for any plausible date are < 10^13 (year ~2603).
+    // Binary-encoded values for any plausible date are >> 10^17.
+    // 10^15 cleanly separates them.
     private const long UnixMsCeiling = 1_000_000_000_000_000L;
-    private const long OffsetBitMin = 184;
-    private const long OffsetBitMax = 1864;
-    private const long UnixEpochTicksDiv1000 = 621_355_968_000_000L;
-    private const long UtcOffsetEncodedBits = 1024L;
 
-    /// <summary>
-    /// Every DateTimeOffset / DateTimeOffset? column in the schema. Adding
-    /// a new persisted DateTimeOffset → add it here so EF reads can't
-    /// trip on it.
-    /// </summary>
+    // Illegal stored-bit window — decodes to an offset outside ±840 min
+    // and trips EF's ArgumentOutOfRangeException.
+    private const long IllegalLow = 841;
+    private const long IllegalHigh = 1207;
+
+    private const long UnixEpochTicksDiv1000 = 621_355_968_000_000L;
+
     public static readonly (string Table, string Column, bool Nullable)[] Targets =
     {
-        // Harvester side — read by /api/inbox and the submission flow.
         ("Titles",                "CreatedAt",         false),
         ("Titles",                "UpdatedAt",         false),
         ("Titles",                "CatalogPromotedAt", true),
@@ -67,14 +80,13 @@ public sealed class DateTimeOffsetRepairService : BackgroundService
         ("HealthSweepRuns",       "FinishedAt",        true),
         ("AppSettings",           "SynologyResolvedAt", true),
         ("AppSettings",           "UpdatedAt",          false),
-        // Catalog side — read by /api/catalog/* and /api/inbox via Metadata join.
-        ("CatalogTitles",         "FirstSeenAt",       false),
-        ("CatalogTitles",         "LastSeenAt",        false),
-        ("CatalogLinks",          "CreatedAt",         false),
-        ("CatalogLinks",          "HealthCheckedAt",   true),
-        ("CatalogTitleMetadata",  "LastEnrichedAt",    true),
-        ("CatalogImportRuns",     "StartedAt",         false),
-        ("CatalogImportRuns",     "FinishedAt",        true),
+        ("CatalogTitles",         "FirstSeenAt",        false),
+        ("CatalogTitles",         "LastSeenAt",         false),
+        ("CatalogLinks",          "CreatedAt",          false),
+        ("CatalogLinks",          "HealthCheckedAt",    true),
+        ("CatalogTitleMetadata",  "LastEnrichedAt",     true),
+        ("CatalogImportRuns",     "StartedAt",          false),
+        ("CatalogImportRuns",     "FinishedAt",         true),
     };
 
     private readonly IDbContextFactory<HarvesterDbContext> _factory;
@@ -89,160 +101,127 @@ public sealed class DateTimeOffsetRepairService : BackgroundService
     }
 
     /// <summary>
-    /// Synchronous PRE-BOOT pass. Runs from <c>Program.cs</c> before any
-    /// EF read (especially <see cref="SettingsService.LoadAsync"/>, which
-    /// is the first EF read at startup and the most common crashloop
-    /// trigger).
-    ///
-    /// Two responsibilities:
-    ///
-    /// <list type="number">
-    ///   <item><description>
-    ///     <b>Force-reset <c>AppSettings</c></b> DateTimeOffset columns.
-    ///     The table has exactly one row; we log its current raw long
-    ///     values for forensics, then unconditionally rewrite the row's
-    ///     <c>UpdatedAt</c> to a known-good encoded UtcNow. Diagnostic
-    ///     status counts have repeatedly reported "0 bad" while EF still
-    ///     throws on materialise, so we stop trusting WHERE clauses and
-    ///     just nuke the values. Cost: the <c>UpdatedAt</c> timestamp
-    ///     resets and any <c>SynologyResolvedAt</c> with bad bits gets
-    ///     nulled (QuickConnect will re-resolve). Both are recoverable.
-    ///   </description></item>
-    ///   <item><description>
-    ///     <b>Three-pass repair on small tables only</b>. The full pass
-    ///     on <c>CatalogLinks</c> (2.3M rows) takes ~3 minutes — blows
-    ///     Fly's 60s health-check grace and trips deploys. Small tables
-    ///     finish in seconds; <c>CatalogLinks</c> is left to the
-    ///     <see cref="BackgroundService"/> after Kestrel starts.
-    ///   </description></item>
-    /// </list>
+    /// Synchronous PRE-BOOT pass. Runs before <see cref="SettingsService.LoadAsync"/>
+    /// so a corrupted AppSettings row can't crashloop the app.
+    /// Surgical: touches ONLY AppSettings, ONLY rows with bad low-11-bit
+    /// offsets, ONLY the low 11 bits (high ticks preserved). Fast (single
+    /// row table), safe (no other table scanned), idempotent.
     /// </summary>
     public static async Task RunPreBootAsync(
         IDbContextFactory<HarvesterDbContext> factory, ILogger log, CancellationToken ct)
     {
-        log.LogInformation("DateTimeOffset pre-boot: starting.");
-        var sw = System.Diagnostics.Stopwatch.StartNew();
         await using var db = await factory.CreateDbContextAsync(ct);
+        var ill_lo = IllegalLow.ToString(CultureInfo.InvariantCulture);
+        var ill_hi = IllegalHigh.ToString(CultureInfo.InvariantCulture);
 
-        await ForceResetAppSettingsAsync(db, log, ct);
-
-        // Run the 3-pass repair on every Target EXCEPT the giant CatalogLinks
-        // table. AppSettings columns are handled above (force-reset). All
-        // other tables are small enough to finish in seconds.
-        foreach (var t in Targets)
-        {
-            if (t.Table == "CatalogLinks") continue;          // deferred to BackgroundService
-            if (t.Table == "AppSettings") continue;           // already force-reset
-            await RepairAsync(db, t.Table, t.Column, t.Nullable, log, ct);
-        }
-
-        sw.Stop();
-        log.LogInformation("DateTimeOffset pre-boot: done in {Elapsed}. CatalogLinks deferred to BackgroundService.", sw.Elapsed);
+        // Heal only the offset bits. High bits (ticks) untouched ⇒ original
+        // wall-clock date preserved. low11 := 0 ⇒ offset = UTC.
+        var sql =
+            $"UPDATE AppSettings " +
+            $"SET UpdatedAt = " +
+            $"      CASE WHEN (UpdatedAt & 2047) BETWEEN {ill_lo} AND {ill_hi} " +
+            $"           THEN UpdatedAt & ~2047 " +
+            $"           ELSE UpdatedAt END, " +
+            $"    SynologyResolvedAt = " +
+            $"      CASE WHEN SynologyResolvedAt IS NOT NULL " +
+            $"            AND (SynologyResolvedAt & 2047) BETWEEN {ill_lo} AND {ill_hi} " +
+            $"           THEN SynologyResolvedAt & ~2047 " +
+            $"           ELSE SynologyResolvedAt END";
+        var n = await db.Database.ExecuteSqlRawAsync(sql, ct);
+        log.LogInformation("DateTimeOffset pre-boot: AppSettings touched {N} row(s) (surgical offset-bit heal).", n);
     }
 
     /// <summary>
-    /// Diagnostic-only for AppSettings — DOES NOT MODIFY THE ROW. Dumps
-    /// the schema (so we know exactly what columns EF will try to read)
-    /// plus every column's value + type for the existing row, so we can
-    /// see what's actually in there when EF keeps throwing despite our
-    /// counts reporting "0 bad". No DELETE, no UPDATE, no destructive
-    /// action against user-entered Synology / TMDB / Plex / auth state.
+    /// Per-column counts of rows in each known-bad state. Single scan.
+    /// Pre-flight before any UPDATE so an operator can verify the model
+    /// matches reality.
     /// </summary>
-    private static async Task ForceResetAppSettingsAsync(
-        HarvesterDbContext db, ILogger log, CancellationToken ct)
+    public static async Task<RepairCounts> CountAsync(
+        HarvesterDbContext db, string table, string col, CancellationToken ct)
     {
-        // 1. Schema dump — what columns does the live DB think AppSettings has?
-        try
-        {
-            var schema = await db.Database
-                .SqlQueryRaw<TableInfoRow>("SELECT name AS Name, type AS Type, [notnull] AS NotNull FROM pragma_table_info('AppSettings')")
-                .ToListAsync(ct);
-            foreach (var c in schema)
-                log.LogInformation("AppSettings schema: {Name} {Type} {Nullable}", c.Name, c.Type, c.NotNull == 0 ? "NULL" : "NOT NULL");
-        }
-        catch (Exception ex) { log.LogWarning(ex, "AppSettings schema dump failed."); }
-
-        // 2. Raw row dump for every INTEGER column (where bad DateTimeOffset
-        //    bytes would hide). Read directly via SqliteDataReader so EF's
-        //    converter can't throw on us mid-dump.
-        try
-        {
-            var conn = (Microsoft.Data.Sqlite.SqliteConnection)db.Database.GetDbConnection();
-            if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync(ct);
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = "SELECT * FROM AppSettings";
-            using var rdr = await cmd.ExecuteReaderAsync(ct);
-            while (await rdr.ReadAsync(ct))
-            {
-                for (var i = 0; i < rdr.FieldCount; i++)
-                {
-                    var name = rdr.GetName(i);
-                    var declared = rdr.GetDataTypeName(i);
-                    if (rdr.IsDBNull(i)) { log.LogInformation("AppSettings row col {Name}={Type} NULL", name, declared); continue; }
-                    // Only inspect INTEGER cols — those are where the bad
-                    // DateTimeOffset bytes would be stored.
-                    if (declared.Equals("INTEGER", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var lv = rdr.GetInt64(i);
-                        log.LogInformation("AppSettings row col {Name}={Type} value={Val} (hex=0x{Hex:X16}, low11={Low})",
-                            name, declared, lv, lv, lv & 2047);
-                    }
-                    else
-                    {
-                        log.LogInformation("AppSettings row col {Name}={Type} (non-integer; not dumped)", name, declared);
-                    }
-                }
-            }
-        }
-        catch (Exception ex) { log.LogWarning(ex, "AppSettings raw row dump failed."); }
-
-        // 3. Probe via EF — log which materialiser-thrown column we hit, if any.
-        try
-        {
-            _ = await db.AppSettings.AsNoTracking().FirstOrDefaultAsync(ct);
-            log.LogInformation("AppSettings EF probe: OK (no force-reset needed).");
-        }
-        catch (Exception ex)
-        {
-            log.LogError(ex, "AppSettings EF probe FAILED. App will crash on SettingsService.LoadAsync. " +
-                             "Check the raw row dump above to identify which INTEGER column has bad bits.");
-        }
-    }
-
-    public sealed class TableInfoRow
-    {
-        public string Name { get; set; } = string.Empty;
-        public string Type { get; set; } = string.Empty;
-        public int NotNull { get; set; }
-    }
-
-    public sealed class AppSettingsRawRow
-    {
-        public int Id { get; set; }
-        public long UpdatedAt { get; set; }
-        public long? SynologyResolvedAt { get; set; }
+        var ceiling = UnixMsCeiling.ToString(CultureInfo.InvariantCulture);
+        var sql =
+            $"SELECT " +
+            $"  SUM(CASE WHEN {col} > 0 AND {col} < {ceiling} THEN 1 ELSE 0 END) AS UnixMsRows, " +
+            $"  SUM(CASE WHEN {col} >= {ceiling} " +
+            $"           AND ({col} & 2047) BETWEEN {IllegalLow} AND {IllegalHigh} " +
+            $"        THEN 1 ELSE 0 END) AS BadOffsetRows " +
+            $"FROM {table}";
+        db.Database.SetCommandTimeout(TimeSpan.FromMinutes(5));
+        var rows = await db.Database.SqlQueryRaw<RepairCountRow>(sql).ToListAsync(ct);
+        var r = rows.FirstOrDefault();
+        return r is null
+            ? new RepairCounts(0, 0)
+            : new RepairCounts(r.UnixMsRows ?? 0L, r.BadOffsetRows ?? 0L);
     }
 
     /// <summary>
-    /// Legacy entry point — kept for callers that want the full pass
-    /// across every column (e.g. an admin endpoint). Slow on CatalogLinks.
+    /// Full per-column repair. Two UPDATE passes:
+    ///   1. Unix-ms values (col &lt; 10^15) → re-encode using the actual
+    ///      EF Core 8 formula. No <c>+1024</c>.
+    ///   2. Bad-offset values (col ≥ 10^15, low11 ∈ [841, 1207]) → clear
+    ///      the low 11 bits. Ticks portion preserved, offset becomes UTC.
     /// </summary>
-    public static async Task RunAllAsync(
-        IDbContextFactory<HarvesterDbContext> factory, ILogger log, CancellationToken ct)
+    public static async Task<long> RepairAsync(
+        HarvesterDbContext db, string table, string col, ILogger log, CancellationToken ct)
     {
-        log.LogInformation("DateTimeOffset repair: starting full pass across {N} column(s).", Targets.Length);
-        var total = 0L;
-        await using var db = await factory.CreateDbContextAsync(ct);
-        foreach (var t in Targets)
-        {
-            total += await RepairAsync(db, t.Table, t.Column, t.Nullable, log, ct);
-        }
-        log.LogInformation("DateTimeOffset repair: full pass done. Re-encoded/healed {Total} row(s).", total);
+        var ceiling = UnixMsCeiling.ToString(CultureInfo.InvariantCulture);
+        db.Database.SetCommandTimeout(TimeSpan.FromMinutes(10));
+
+        // Pass 1: re-encode raw unix-ms with the correct formula. low11 = 0 (UTC).
+        var unixSql =
+            $"UPDATE {table} " +
+            $"SET {col} = ({UnixEpochTicksDiv1000} + {col} * 10) * 2048 " +
+            $"WHERE {col} > 0 AND {col} < {ceiling}";
+        var swA = System.Diagnostics.Stopwatch.StartNew();
+        var fixedUnix = await db.Database.ExecuteSqlRawAsync(unixSql, ct);
+        swA.Stop();
+
+        // Pass 2: heal rows with illegal offset bits (the [841, 1207]
+        // band, including 1024 which is my repair's own signature).
+        // Clearing the low 11 bits leaves the ticks portion intact and
+        // sets offset to UTC.
+        var badSql =
+            $"UPDATE {table} " +
+            $"SET {col} = {col} & ~2047 " +
+            $"WHERE {col} >= {ceiling} " +
+            $"  AND ({col} & 2047) BETWEEN {IllegalLow} AND {IllegalHigh}";
+        var swB = System.Diagnostics.Stopwatch.StartNew();
+        var fixedBad = await db.Database.ExecuteSqlRawAsync(badSql, ct);
+        swB.Stop();
+
+        if (fixedUnix > 0 || fixedBad > 0)
+            log.LogInformation(
+                "DateTimeOffset repair: {Table}.{Col} unix-ms {Unix} in {EA}, bad-offset {Bad} in {EB}.",
+                table, col, fixedUnix, swA.Elapsed, fixedBad, swB.Elapsed);
+        return fixedUnix + fixedBad;
+    }
+
+    public sealed record RepairCounts(long UnixMs, long BadBits)
+    {
+        public long Total => UnixMs + BadBits;
+    }
+
+    public sealed class RepairCountRow
+    {
+        public long? UnixMsRows { get; set; }
+        public long? BadOffsetRows { get; set; }
+    }
+
+    /// <summary>
+    /// Matches EF Core 8's <c>DateTimeOffsetToBinaryConverter</c> exactly.
+    /// Verified against EF Core source AND covered by a unit test that
+    /// invokes the actual converter — see <c>DateTimeOffsetRepairTests</c>.
+    /// </summary>
+    public static long EncodeBinary(DateTimeOffset dto)
+    {
+        var offsetMin = (long)dto.Offset.TotalMinutes;
+        return ((dto.Ticks / 1000) << 11) | (offsetMin & 0x7FF);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _log.LogInformation("DateTimeOffset repair: service scheduled (5s startup delay).");
+        _log.LogInformation("DateTimeOffset repair: BackgroundService scheduled (5s delay).");
         try { await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken); }
         catch (OperationCanceledException) { return; }
 
@@ -253,116 +232,11 @@ public sealed class DateTimeOffsetRepairService : BackgroundService
             foreach (var t in Targets)
             {
                 if (stoppingToken.IsCancellationRequested) return;
-                total += await RepairAsync(db, t.Table, t.Column, t.Nullable, _log, stoppingToken);
+                total += await RepairAsync(db, t.Table, t.Column, _log, stoppingToken);
             }
             _log.LogInformation("DateTimeOffset repair: pass complete. Re-encoded/healed {Total} row(s).", total);
-
-            await using var db2 = await _factory.CreateDbContextAsync(stoppingToken);
-            var leftover = 0L;
-            foreach (var t in Targets)
-            {
-                var c = await CountAsync(db2, t.Table, t.Column, stoppingToken);
-                leftover += c.Total;
-                if (c.Total != 0)
-                    _log.LogWarning("DateTimeOffset repair: {Table}.{Col} STILL has {Unix} unix-ms + {Zero} zero + {Bad} bad-offset.",
-                        t.Table, t.Column, c.UnixMs, c.Zero, c.BadBits);
-            }
-            if (leftover == 0)
-                _log.LogInformation("DateTimeOffset repair: post-repair scan shows 0 bad rows across {N} column(s). Database clean.", Targets.Length);
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex)
-        {
-            _log.LogError(ex, "DateTimeOffset repair crashed.");
-        }
-    }
-
-    /// <summary>
-    /// Re-encode and heal one column. Returns total rows touched.
-    /// Three passes (unix-ms, zero, bad-offset) each in its own implicit
-    /// transaction so a slow pass doesn't lock the table indefinitely.
-    /// </summary>
-    public static async Task<long> RepairAsync(
-        HarvesterDbContext db, string table, string col, bool nullable, ILogger log, CancellationToken ct)
-    {
-        var ceiling = UnixMsCeiling.ToString(CultureInfo.InvariantCulture);
-        db.Database.SetCommandTimeout(TimeSpan.FromMinutes(10));
-
-        // 1) Unix-ms → binary-encoded UTC.
-        var unixSql =
-            $"UPDATE {table} " +
-            $"SET {col} = ({UnixEpochTicksDiv1000} + {col} * 10) * 2048 + {UtcOffsetEncodedBits} " +
-            $"WHERE {col} > 0 AND {col} < {ceiling}";
-        var fixedUnix = await db.Database.ExecuteSqlRawAsync(unixSql, ct);
-
-        // 2) Stored zero. Nullable column → NULL is the semantically right
-        //    "not set"; non-nullable → 1024 (encoded epoch UTC) so EF can
-        //    read it without throwing.
-        var zeroTarget = nullable ? "NULL" : UtcOffsetEncodedBits.ToString(CultureInfo.InvariantCulture);
-        var zeroSql =
-            $"UPDATE {table} SET {col} = {zeroTarget} WHERE {col} = 0";
-        var fixedZero = await db.Database.ExecuteSqlRawAsync(zeroSql, ct);
-
-        // 3) Already-encoded with bad offset bits → pin offset to UTC.
-        var badSql =
-            $"UPDATE {table} " +
-            $"SET {col} = ({col} & ~2047) | {UtcOffsetEncodedBits} " +
-            $"WHERE {col} >= {ceiling} " +
-            $"  AND (({col} & 2047) < {OffsetBitMin} OR ({col} & 2047) > {OffsetBitMax})";
-        var fixedBad = await db.Database.ExecuteSqlRawAsync(badSql, ct);
-
-        var total = fixedUnix + fixedZero + fixedBad;
-        if (total > 0)
-            log.LogInformation(
-                "DateTimeOffset repair: {Table}.{Col} unix-ms {Unix}, zero {Zero}, bad-offset {Bad}.",
-                table, col, fixedUnix, fixedZero, fixedBad);
-        return total;
-    }
-
-    /// <summary>
-    /// Counts per failure mode for one column. Single scan over the table.
-    /// </summary>
-    public static async Task<RepairCounts> CountAsync(
-        HarvesterDbContext db, string table, string col, CancellationToken ct)
-    {
-        var ceiling = UnixMsCeiling.ToString(CultureInfo.InvariantCulture);
-        var sql =
-            $"SELECT " +
-            $"  SUM(CASE WHEN {col} > 0 AND {col} < {ceiling} THEN 1 ELSE 0 END) AS UnixMsRows, " +
-            $"  SUM(CASE WHEN {col} = 0 THEN 1 ELSE 0 END) AS ZeroRows, " +
-            $"  SUM(CASE WHEN {col} >= {ceiling} " +
-            $"           AND (({col} & 2047) < {OffsetBitMin} OR ({col} & 2047) > {OffsetBitMax}) " +
-            $"        THEN 1 ELSE 0 END) AS BadOffsetRows " +
-            $"FROM {table}";
-
-        db.Database.SetCommandTimeout(TimeSpan.FromMinutes(5));
-        var rows = await db.Database.SqlQueryRaw<RepairCountRow>(sql).ToListAsync(ct);
-        var r = rows.FirstOrDefault();
-        return r is null
-            ? new RepairCounts(0, 0, 0)
-            : new RepairCounts(r.UnixMsRows ?? 0L, r.ZeroRows ?? 0L, r.BadOffsetRows ?? 0L);
-    }
-
-    public sealed record RepairCounts(long UnixMs, long Zero, long BadBits)
-    {
-        public long Total => UnixMs + Zero + BadBits;
-    }
-
-    public sealed class RepairCountRow
-    {
-        public long? UnixMsRows { get; set; }
-        public long? ZeroRows { get; set; }
-        public long? BadOffsetRows { get; set; }
-    }
-
-    /// <summary>
-    /// Mirrors EF Core's <c>DateTimeOffsetToBinaryConverter</c>:
-    /// <c>((ticks / 1000) &lt;&lt; 11) | ((offsetMinutes + 1024) &amp; 0x7FF)</c>.
-    /// Public so the ingestor can produce schema-compatible values directly.
-    /// </summary>
-    public static long EncodeBinary(DateTimeOffset dto)
-    {
-        var offsetMin = (long)dto.Offset.TotalMinutes;
-        return ((dto.Ticks / 1000) << 11) | ((offsetMin + 1024) & 0x7FF);
+        catch (Exception ex) { _log.LogError(ex, "DateTimeOffset repair crashed."); }
     }
 }
