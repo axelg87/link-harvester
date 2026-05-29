@@ -282,10 +282,18 @@ public sealed class DiscoveryRefreshService : BackgroundService
     private static async Task<int?> ResolveCatalogTitleAsync(
         HarvesterDbContext db, int? tmdbId, string? imdbId, string title, int? year, CancellationToken ct)
     {
+        // TMDB id can live on either CatalogTitleEntity.TmdbId (set by the
+        // Hydracker ingestor when the dump included it) OR on
+        // CatalogTitleMetadataEntity.TmdbId (set by TmdbEnricherService for
+        // titles enriched after ingestion). Most enriched titles only have
+        // it on Metadata — that's why every discovery refresh returned 0
+        // matches before this lookup checked both places.
         if (tmdbId.HasValue && tmdbId.Value > 0)
         {
             var byTmdb = await db.CatalogTitles
-                .Where(t => !t.IsHidden && t.TmdbId == tmdbId)
+                .Where(t => !t.IsHidden
+                         && (t.TmdbId == tmdbId
+                             || (t.Metadata != null && t.Metadata.TmdbId == tmdbId)))
                 .Select(t => (int?)t.Id)
                 .FirstOrDefaultAsync(ct);
             if (byTmdb.HasValue) return byTmdb;
@@ -293,19 +301,24 @@ public sealed class DiscoveryRefreshService : BackgroundService
         if (!string.IsNullOrEmpty(imdbId))
         {
             var byImdb = await db.CatalogTitles
-                .Where(t => !t.IsHidden && t.ImdbId == imdbId)
+                .Where(t => !t.IsHidden
+                         && (t.ImdbId == imdbId
+                             || (t.Metadata != null && t.Metadata.ImdbId == imdbId)))
                 .Select(t => (int?)t.Id)
                 .FirstOrDefaultAsync(ct);
             if (byImdb.HasValue) return byImdb;
         }
         if (!string.IsNullOrWhiteSpace(title))
         {
+            // CatalogTitle.NormalizedTitle is produced by Core.TitleNormalizer:
+            // lower-cased, diacritics stripped, non-alphanumerics collapsed
+            // to single spaces. Our local Normalize() must produce the
+            // same shape or this branch never matches.
             var normalized = Normalize(title);
             var byTitle = await db.CatalogTitles
                 .Where(t => !t.IsHidden && t.NormalizedTitle == normalized)
                 .Select(t => new { t.Id, Year = t.Metadata != null ? t.Metadata.Year : null })
                 .ToListAsync(ct);
-            // Prefer matching year within ±1 if we have one, else any match.
             if (year.HasValue)
             {
                 var withYear = byTitle.FirstOrDefault(b => b.Year.HasValue && Math.Abs(b.Year.Value - year.Value) <= 1);
@@ -317,8 +330,45 @@ public sealed class DiscoveryRefreshService : BackgroundService
         return null;
     }
 
+    /// <summary>
+    /// Matches the shape produced by <c>Core.TitleNormalizer</c> — lowercase,
+    /// diacritics stripped, non-alphanumerics collapsed to single spaces,
+    /// trimmed. The previous version dropped spaces entirely, which made
+    /// every normalised-title comparison miss.
+    /// </summary>
     private static string Normalize(string value)
-        => new(value.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
+    {
+        var lowered = value.ToLowerInvariant();
+        var stripped = StripDiacritics(lowered);
+        var sb = new System.Text.StringBuilder(stripped.Length);
+        var lastWasSpace = false;
+        foreach (var c in stripped)
+        {
+            if (char.IsLetterOrDigit(c))
+            {
+                sb.Append(c);
+                lastWasSpace = false;
+            }
+            else if (!lastWasSpace && sb.Length > 0)
+            {
+                sb.Append(' ');
+                lastWasSpace = true;
+            }
+        }
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string StripDiacritics(string s)
+    {
+        var normalized = s.Normalize(System.Text.NormalizationForm.FormD);
+        var sb = new System.Text.StringBuilder(normalized.Length);
+        foreach (var c in normalized)
+        {
+            if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.NonSpacingMark)
+                sb.Append(c);
+        }
+        return sb.ToString().Normalize(System.Text.NormalizationForm.FormC);
+    }
 
     private static int? ParseYear(string? date)
     {
