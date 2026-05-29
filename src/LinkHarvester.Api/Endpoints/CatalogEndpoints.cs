@@ -238,7 +238,7 @@ public static class CatalogEndpoints
         });
 
         // ── One title with all its variants ──────────────────────────────────
-        grp.MapGet("/titles/{id:int}", async (int id, HarvesterDbContext db, CancellationToken ct) =>
+        grp.MapGet("/titles/{id:int}", async (int id, HarvesterDbContext db, ISettingsService settings, CancellationToken ct) =>
         {
             var t = await db.CatalogTitles.AsNoTracking()
                 .Include(x => x.Metadata)
@@ -262,6 +262,15 @@ public static class CatalogEndpoints
                 .GroupBy(l => l.EpisodeId!.Value)
                 .ToDictionary(g => g.Key, g => g.Select(MapLink).ToList());
 
+            // Server picks the best variant for the title (movie) and one per
+            // episode. The WASM client reads these BestLinkId fields directly
+            // for its "preselect on open" + "missing episode → link id" logic;
+            // there is no second ranker on the client side anywhere.
+            var s = settings.Current;
+            var titleLevelBest = BestVariantPicker.Pick(
+                links.Where(l => l.EpisodeId == null),
+                s.HosterPriority, s.EffectiveQualityPreference, s.AudioPreference);
+
             var dto = new TitleDetailDto(
                 Id: t.Id,
                 Title: t.TitleName,
@@ -279,14 +288,26 @@ public static class CatalogEndpoints
                 MetadataUncertain: t.Metadata?.MetadataUncertain == true,
                 Links: links.Where(l => l.EpisodeId == null).Select(MapLink).ToList(),
                 Episodes: episodes
-                    .Select(e => new EpisodeDto(
-                        e.Id,
-                        e.SeasonNumber,
-                        e.EpisodeNumber,
-                        e.EpisodeName,
-                        e.IsFullSeason,
-                        linksByEpisode.TryGetValue(e.Id, out var episodeLinks) ? episodeLinks : new()))
-                    .ToList());
+                    .Select(e =>
+                    {
+                        var episodeLinks = linksByEpisode.TryGetValue(e.Id, out var el) ? el : new();
+                        // The raw CatalogLinkEntity rows we have here are the
+                        // ones that EpisodeId == e.Id. Run BestVariantPicker
+                        // on those directly.
+                        var bestForEpisode = BestVariantPicker.Pick(
+                            links.Where(l => l.EpisodeId == e.Id),
+                            s.HosterPriority, s.EffectiveQualityPreference, s.AudioPreference);
+                        return new EpisodeDto(
+                            e.Id,
+                            e.SeasonNumber,
+                            e.EpisodeNumber,
+                            e.EpisodeName,
+                            e.IsFullSeason,
+                            episodeLinks,
+                            BestLinkId: bestForEpisode?.Id);
+                    })
+                    .ToList(),
+                BestLinkId: titleLevelBest?.Id);
             return Results.Ok(dto);
         });
 
@@ -567,30 +588,42 @@ public static class CatalogEndpoints
             }
         });
 
-        grp.MapGet("/stats", async (HarvesterDbContext db, TmdbStatusTracker tmdb, CancellationToken ct) =>
+        // Stats does five full COUNTs on a 2.3M+ row catalog. The Settings
+        // page used to poll this every 3 s; under any moderate load each
+        // COUNT(*) takes ~30 s on SQLite, the requests queued up, and the
+        // worker's thread pool starved. Every unrelated endpoint then
+        // showed up as a fly-proxy [PU03] unreachable. Caching the result
+        // for 30 s (single-flight via CatalogAggregatesCache) collapses
+        // the storm into one count per cache window.
+        grp.MapGet("/stats", async (
+            HarvesterDbContext db,
+            TmdbStatusTracker tmdb,
+            CatalogAggregatesCache cache,
+            CancellationToken ct) =>
         {
-            var titles = await db.CatalogTitles.CountAsync(ct);
-            var links = await db.CatalogLinks.CountAsync(ct);
-            var episodes = await db.CatalogEpisodes.CountAsync(ct);
-            var enriched = await db.CatalogTitleMetadata.CountAsync(m => m.EnrichmentSource.StartsWith("tmdb_"), ct);
-            var failed = await db.CatalogTitleMetadata.CountAsync(m => m.EnrichmentSource == "failed", ct);
-
-            // Subset of the failed bucket that looks like SQLite write
-            // contention or a 30-second command-timeout — i.e. transient
-            // infra noise that the user can safely retry without risking
-            // a wasted TMDB call. Patterns live in EnrichmentMaintenance so
-            // the count, the manual reset endpoint, and the eventual
-            // BUG-2 startup auto-heal stay in lock-step.
-            var transientFailed = await EnrichmentMaintenance.CountTransientFailedAsync(db, ct);
+            var snapshot = await cache.GetOrAddAsync(
+                "catalog-stats:v1",
+                async token =>
+                {
+                    var titles = await db.CatalogTitles.CountAsync(token);
+                    var links = await db.CatalogLinks.CountAsync(token);
+                    var episodes = await db.CatalogEpisodes.CountAsync(token);
+                    var enriched = await db.CatalogTitleMetadata.CountAsync(m => m.EnrichmentSource.StartsWith("tmdb_"), token);
+                    var failed = await db.CatalogTitleMetadata.CountAsync(m => m.EnrichmentSource == "failed", token);
+                    var transientFailed = await EnrichmentMaintenance.CountTransientFailedAsync(db, token);
+                    return new CatalogStatsSnapshot(titles, links, episodes, enriched, failed, transientFailed);
+                },
+                TimeSpan.FromSeconds(30),
+                ct);
 
             return Results.Ok(new
             {
-                titles,
-                links,
-                episodes,
-                enriched,
-                enrichmentFailed = failed,
-                enrichmentFailedTransient = transientFailed,
+                titles = snapshot.Titles,
+                links = snapshot.Links,
+                episodes = snapshot.Episodes,
+                enriched = snapshot.Enriched,
+                enrichmentFailed = snapshot.EnrichmentFailed,
+                enrichmentFailedTransient = snapshot.EnrichmentFailedTransient,
                 enrichmentRunState = tmdb.State
             });
         });
@@ -654,16 +687,25 @@ public static class CatalogEndpoints
         List<string> Genres, string? OriginalLanguage, string? EnrichmentSource, bool MetadataUncertain,
         int? SeasonNumber);
 
+    /// <summary>Snapshot of the five aggregate counts /stats serves. Cached
+    /// for 30 s via <see cref="CatalogAggregatesCache"/> so concurrent
+    /// polls collapse into one COUNT(*) per window.</summary>
+    public sealed record CatalogStatsSnapshot(
+        int Titles, int Links, int Episodes, int Enriched,
+        int EnrichmentFailed, int EnrichmentFailedTransient);
+
     public sealed record SearchPageDto(int Total, int Page, int PageSize, List<SearchHitDto> Items);
 
     public sealed record TitleDetailDto(
         int Id, string Title, string? OriginalTitle, string Category, string? Poster,
         int? Year, double? Rating, int? Runtime, string? Overview,
         List<string> Genres, string? OriginalLanguage, string? ImdbId, int? TmdbId,
-        bool MetadataUncertain, List<LinkDto> Links, List<EpisodeDto> Episodes);
+        bool MetadataUncertain, List<LinkDto> Links, List<EpisodeDto> Episodes,
+        int? BestLinkId);
 
     public sealed record EpisodeDto(int Id, int SeasonNumber, int EpisodeNumber,
-        string? EpisodeName, bool IsFullSeason, List<LinkDto> Links);
+        string? EpisodeName, bool IsFullSeason, List<LinkDto> Links,
+        int? BestLinkId);
 
     public sealed record LinkDto(int Id, string Url, string Host, string? Quality,
         string? AudioLangs, string? SubLangs, long? SizeBytes,

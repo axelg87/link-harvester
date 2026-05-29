@@ -132,7 +132,10 @@
         {
             try { await InvokeAsync(RefreshCatalogStatus); }
             catch { /* ignore transient polling errors */ }
-        }, null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3));
+        // 30 s (was 3 s). /api/catalog/stats is now cached for 30 s server-side
+        // anyway; polling faster than the cache window just burns roundtrips
+        // and used to push the worker into thread-pool starvation.
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
 
     public void Dispose() => _poller?.Dispose();

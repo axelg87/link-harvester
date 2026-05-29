@@ -209,6 +209,12 @@
         }
     }
 
+    // Single source of truth: BestLinkId comes from the server (computed
+    // by BestVariantPicker against the user's settings). The client never
+    // re-ranks. Before this, the client used a HostRank+SizeBytes sort that
+    // disagreed with /api/catalog/lookup's BestVariantPicker output — the
+    // search-bar SEND would pick 1080p while the modal pre-selected 4K for
+    // the same title.
     private static List<int> ResolveMissingLinkIds(TitleDetail title, HashSet<(int s, int e)> owned)
     {
         var ids = new List<int>();
@@ -221,20 +227,12 @@
                     ? owned.Any(o => o.s == ep.SeasonNumber)
                     : owned.Contains((ep.SeasonNumber, ep.EpisodeNumber));
                 if (isOwned) continue;
-                var best = (ep.Links ?? new())
-                    .OrderBy(l => TitleModalHost.HostRank(l.Host))
-                    .ThenByDescending(l => l.SizeBytes ?? 0)
-                    .FirstOrDefault();
-                if (best is not null) ids.Add(best.Id);
+                if (ep.BestLinkId is int eid) ids.Add(eid);
             }
         }
-        else
+        else if (title.BestLinkId is int tid)
         {
-            var best = (title.Links ?? new())
-                .OrderBy(l => TitleModalHost.HostRank(l.Host))
-                .ThenByDescending(l => l.SizeBytes ?? 0)
-                .FirstOrDefault();
-            if (best is not null) ids.Add(best.Id);
+            ids.Add(tid);
         }
         return ids;
     }
