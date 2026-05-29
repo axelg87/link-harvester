@@ -17,18 +17,23 @@ public static class InboxEndpoints
         grp.MapGet("/inbox", async (HarvesterDbContext db, CancellationToken ct) =>
         {
             // Group by Title. For each title return the variants we should display.
+            // Date cutoff + visible-status filter run server-side via Any() so
+            // SQLite drops dead titles before hydration. Previously the same
+            // filter ran on the materialised list, paying full deserialisation
+            // cost for every title that was about to be dropped.
+            var cutoff = DateTimeOffset.UtcNow.AddDays(-3);
             var titles = await db.Titles
-                .Where(t => t.Status == TitleStatus.InInbox || t.Status == TitleStatus.New)
+                .Where(t => (t.Status == TitleStatus.InInbox || t.Status == TitleStatus.New)
+                    && t.Articles.Any(a => a.DiscoveredAt >= cutoff
+                        && (a.Status == ArticleStatus.Parsed
+                            || a.Status == ArticleStatus.Resolved
+                            || a.Status == ArticleStatus.InInbox)))
                 .OrderByDescending(t => t.UpdatedAt)
                 .Take(200)
                 .Include(t => t.Articles)
                 .AsNoTracking()
+                .AsSplitQuery()
                 .ToListAsync(ct);
-            var cutoff = DateTimeOffset.UtcNow.AddDays(-3);
-            titles = titles
-                .Where(t => t.Articles.Any(a => a.DiscoveredAt >= cutoff &&
-                    (a.Status == ArticleStatus.Parsed || a.Status == ArticleStatus.Resolved || a.Status == ArticleStatus.InInbox)))
-                .ToList();
 
             var catalogIds = titles.Where(t => t.CatalogTitleId.HasValue).Select(t => t.CatalogTitleId!.Value).Distinct().ToList();
             var catalogById = catalogIds.Count == 0

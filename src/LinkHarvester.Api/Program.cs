@@ -13,6 +13,7 @@ using LinkHarvester.Synology;
 using LinkHarvester.Worker;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 using Serilog.Events;
@@ -65,6 +66,25 @@ builder.Services
 
 builder.Services.AddAuthorization();
 builder.Services.AddEndpointsApiExplorer();
+
+// Brotli + gzip on every API response. JSON payloads from /api/inbox,
+// /api/catalog/search, etc. are highly compressible (~5–10×) and the
+// app is in Mumbai while the user is in France — every wasted byte
+// adds RTT-amplified latency.
+builder.Services.AddResponseCompression(o =>
+{
+    o.EnableForHttps = true;
+    o.Providers.Add<BrotliCompressionProvider>();
+    o.Providers.Add<GzipCompressionProvider>();
+    o.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(new[]
+    {
+        "application/json",
+        "application/wasm",
+        "application/octet-stream",
+    });
+});
+builder.Services.Configure<BrotliCompressionProviderOptions>(o => o.Level = System.IO.Compression.CompressionLevel.Fastest);
+builder.Services.Configure<GzipCompressionProviderOptions>(o => o.Level = System.IO.Compression.CompressionLevel.Fastest);
 
 builder.Services.AddHarvesterSources();
 builder.Services.AddHarvesterResolution(builder.Configuration);
@@ -169,6 +189,10 @@ _ = Task.Run(async () =>
 });
 
 
+
+// Must run before UseStaticFiles / UseBlazorFrameworkFiles to compress
+// the WASM bundle on first download too.
+app.UseResponseCompression();
 
 app.UseSerilogRequestLogging(opts =>
 {

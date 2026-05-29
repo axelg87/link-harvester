@@ -1,4 +1,5 @@
 @inject HarvesterApi Api
+@inject BrowserCache Cache
 
 <div class="lh-inbox">
     <div class="lh-toolbar">
@@ -83,14 +84,37 @@
     private string? _bulkMessage;
     private bool _bulkOk;
 
-    protected override async Task OnInitializedAsync() => await Refresh();
+    private const string InboxCacheKey = "lh-inbox-v1";
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Stale-while-revalidate. Show the last cached payload instantly so
+        // the user doesn't stare at "Loading…" through one full Mumbai
+        // round-trip, then fetch fresh in the background and rerender.
+        var cached = await Cache.TryGetAsync<List<InboxCard>>(InboxCacheKey);
+        if (cached is { Value.Count: > 0 })
+        {
+            _cards = cached.Value;
+            _loading = false;
+            ApplyFilters();
+            StateHasChanged();
+        }
+        await Refresh();
+    }
 
     private async Task Refresh()
     {
-        _loading = true;
-        StateHasChanged();
-        try { _cards = await Api.GetInboxAsync(); }
-        catch { _cards = new(); }
+        // Don't flip _loading back on if we already painted from cache —
+        // the spinner would re-appear over visible data which feels worse
+        // than a slightly stale list.
+        var hadCachedData = _cards.Count > 0;
+        if (!hadCachedData) { _loading = true; StateHasChanged(); }
+        try
+        {
+            _cards = await Api.GetInboxAsync();
+            await Cache.SetAsync(InboxCacheKey, _cards);
+        }
+        catch { if (!hadCachedData) _cards = new(); }
         finally { _loading = false; ApplyFilters(); }
     }
 
