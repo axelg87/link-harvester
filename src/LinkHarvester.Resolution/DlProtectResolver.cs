@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using AngleSharp.Html.Dom;
 using AngleSharp.Html.Parser;
 using LinkHarvester.Core;
@@ -23,9 +24,23 @@ namespace LinkHarvester.Resolution;
 /// </summary>
 public sealed class DlProtectResolver : ILinkResolver
 {
+    // Substring match — covers subdomain variants (rg.to vs rapidgator.net,
+    // dl.1fichier.com, etc.). Add a new host as you observe it landing in
+    // the body. ".com" / ".net" suffix variants both appear in the wild;
+    // dl-protect rotates the hoster set every few weeks.
     private static readonly string[] FinalHosterDomainHints =
     {
-        "1fichier.com", "rapidgator.net", "uploady.io", "dailyuploads.net", "nitroflare.com", "turbobit.net"
+        "1fichier.com", "1fichier.net",
+        "rapidgator.net", "rapidgator.com", "rg.to",
+        "uploady.io", "uploady.cc",
+        "dailyuploads.net",
+        "nitroflare.com", "nitroflare.net",
+        "turbobit.net", "turb.cc",
+        "mega.nz", "mega.co.nz",
+        "fikper.com",
+        "katfile.com",
+        "ddownload.com", "ddl.to",
+        "uploadgig.com",
     };
 
     private readonly IHttpClientFactory _httpFactory;
@@ -121,25 +136,27 @@ public sealed class DlProtectResolver : ILinkResolver
                     return new ResolutionOutcome(ResolutionAttemptResult.Success, links, null, capCalls, capCost);
                 }
 
-                // Structured diagnostic — when dl-protect changes its HTML
-                // we get a silent "no URLs extracted" failure with no clue
-                // why. Capture everything a human or a script needs to tell
-                // the three plausible regressions apart without a debugger:
-                //   (a) selectors changed: tokenSent=false/true but body has
-                //       no a.dest-url / a.btn-proceed match + body large.
-                //   (b) Turnstile now enforced: tokenSent=false, body still
-                //       shows the challenge widget on the POST response.
-                //   (c) link genuinely dead: short body, error markup.
+                // Structured diagnostic. PR #35's first round-trip showed
+                // hasDestUrlAnchor=True every time — the anchor exists but
+                // the href didn't satisfy IsFinalHosterUrl. This PR's
+                // ExtractFinalUrls also walks data-href/data-link/data-url
+                // and runs a body-text regex; if even that finds nothing,
+                // the diagnostic now includes the outerHTML of every
+                // a.dest-url element so we can see exactly which attribute
+                // dl-protect put the URL on this time.
+                var destAnchorDump = DumpDestAnchors(body);
                 _log.LogWarning(
                     "dl-protect POST yielded no hoster URL. attempt={Attempt} url={Url} bodyLen={BodyLen} " +
                     "hasDestUrlAnchor={HasDest} hasBtnProceedAnchor={HasBtn} " +
-                    "hasTurnstileMarkup={HasTurnstile} tokenSent={TokenSent} bodyHead={BodyHead}",
+                    "hasTurnstileMarkup={HasTurnstile} tokenSent={TokenSent} " +
+                    "destAnchorOuterHtml={DestAnchorHtml} bodyHead={BodyHead}",
                     attempt, protectedUrl, body.Length,
                     body.Contains("dest-url", StringComparison.OrdinalIgnoreCase),
                     body.Contains("btn-proceed", StringComparison.OrdinalIgnoreCase),
                     body.Contains("cf-turnstile", StringComparison.OrdinalIgnoreCase)
                         || body.Contains("data-sitekey", StringComparison.OrdinalIgnoreCase),
                     token is { Length: > 0 },
+                    destAnchorDump,
                     Truncate(body, 240).Replace('\n', ' ').Replace('\r', ' '));
             }
             catch (TaskCanceledException) when (!ct.IsCancellationRequested)
@@ -159,31 +176,66 @@ public sealed class DlProtectResolver : ILinkResolver
             capCalls, capCost);
     }
 
+    /// <summary>Test seam — same algorithm as the private path.</summary>
+    internal static List<string> ExtractFinalUrlsForTesting(string body) => ExtractFinalUrls(body);
+
     private static List<string> ExtractFinalUrls(string body)
     {
         var doc = new HtmlParser().ParseDocument(body);
         var urls = new List<string>();
 
-        // Preferred anchor: explicit class.
+        // Layer 1 — preferred anchor classes (legacy dl-protect format).
         foreach (var a in doc.QuerySelectorAll("a.dest-url, a.btn-proceed").OfType<IHtmlAnchorElement>())
         {
-            var href = a.GetAttribute("href");
-            if (!string.IsNullOrEmpty(href) && IsFinalHosterUrl(href))
-                urls.Add(href!);
+            HarvestCandidate(a.GetAttribute("href"), urls);
+            // The structured PR #35 diagnostic showed `hasDestUrlAnchor=True`
+            // on every recent failure, yet IsFinalHosterUrl rejected the
+            // href. dl-protect now (sometimes) puts the real URL on a data
+            // attribute and uses `href="#"` or a relative path on the
+            // anchor itself — pick those up too.
+            HarvestCandidate(a.GetAttribute("data-href"), urls);
+            HarvestCandidate(a.GetAttribute("data-link"), urls);
+            HarvestCandidate(a.GetAttribute("data-url"), urls);
         }
 
-        // Fallback: any <a> on the page that points at a known hoster domain.
+        // Layer 2 — fallback: any <a>/<button> with a href OR a data-href
+        // pointing at a known hoster domain.
         if (urls.Count == 0)
         {
-            foreach (var a in doc.QuerySelectorAll("a[href]").OfType<IHtmlAnchorElement>())
+            foreach (var el in doc.QuerySelectorAll("a[href], a[data-href], a[data-url], button[data-href], button[data-url]"))
             {
-                var href = a.GetAttribute("href") ?? string.Empty;
-                if (IsFinalHosterUrl(href)) urls.Add(href);
+                HarvestCandidate(el.GetAttribute("href"), urls);
+                HarvestCandidate(el.GetAttribute("data-href"), urls);
+                HarvestCandidate(el.GetAttribute("data-link"), urls);
+                HarvestCandidate(el.GetAttribute("data-url"), urls);
+            }
+        }
+
+        // Layer 3 — body-text regex. Catches URLs embedded in inline JS
+        // (`window.location='https://1fichier.com/…'`, `onclick="…"`, etc.)
+        // and anywhere outside an anchor element. Last-resort, deliberately
+        // permissive: must be https://, must hit a known hoster domain.
+        if (urls.Count == 0)
+        {
+            foreach (Match m in HosterUrlInBodyRegex.Matches(body))
+            {
+                HarvestCandidate(m.Value, urls);
             }
         }
 
         return urls.Distinct().ToList();
     }
+
+    private static void HarvestCandidate(string? raw, List<string> sink)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return;
+        var trimmed = raw.Trim().Trim('"', '\'');
+        if (IsFinalHosterUrl(trimmed)) sink.Add(trimmed);
+    }
+
+    private static readonly Regex HosterUrlInBodyRegex = new(
+        @"https://[A-Za-z0-9._\-/?&=%~+#]+",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     private static bool IsFinalHosterUrl(string href)
     {
@@ -207,6 +259,27 @@ public sealed class DlProtectResolver : ILinkResolver
 
     private static string Truncate(string s, int max)
         => s.Length <= max ? s : s.Substring(0, max);
+
+    /// <summary>
+    /// Returns the outer HTML of every <c>a.dest-url</c> / <c>a.btn-proceed</c>
+    /// element on the page, joined with " ┊ " and truncated to 480 chars.
+    /// If extraction still fails after the data-attr + body-regex layers
+    /// in <see cref="ExtractFinalUrls"/>, this line tells us the exact
+    /// shape dl-protect is serving so we can patch surgically.
+    /// </summary>
+    private static string DumpDestAnchors(string body)
+    {
+        try
+        {
+            var doc = new HtmlParser().ParseDocument(body);
+            var anchors = doc.QuerySelectorAll("a.dest-url, a.btn-proceed").OfType<IHtmlAnchorElement>().ToList();
+            if (anchors.Count == 0) return "<none>";
+            var joined = string.Join(" ┊ ",
+                anchors.Select(a => (a.OuterHtml ?? string.Empty).Replace('\n', ' ').Replace('\r', ' ')));
+            return Truncate(joined, 480);
+        }
+        catch { return "<parse-error>"; }
+    }
 
     private static string GuessHoster(string url)
     {
