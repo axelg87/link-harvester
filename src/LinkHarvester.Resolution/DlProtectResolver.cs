@@ -121,7 +121,26 @@ public sealed class DlProtectResolver : ILinkResolver
                     return new ResolutionOutcome(ResolutionAttemptResult.Success, links, null, capCalls, capCost);
                 }
 
-                _log.LogWarning("dl-protect POST yielded no hoster URL on attempt {N}", attempt);
+                // Structured diagnostic — when dl-protect changes its HTML
+                // we get a silent "no URLs extracted" failure with no clue
+                // why. Capture everything a human or a script needs to tell
+                // the three plausible regressions apart without a debugger:
+                //   (a) selectors changed: tokenSent=false/true but body has
+                //       no a.dest-url / a.btn-proceed match + body large.
+                //   (b) Turnstile now enforced: tokenSent=false, body still
+                //       shows the challenge widget on the POST response.
+                //   (c) link genuinely dead: short body, error markup.
+                _log.LogWarning(
+                    "dl-protect POST yielded no hoster URL. attempt={Attempt} url={Url} bodyLen={BodyLen} " +
+                    "hasDestUrlAnchor={HasDest} hasBtnProceedAnchor={HasBtn} " +
+                    "hasTurnstileMarkup={HasTurnstile} tokenSent={TokenSent} bodyHead={BodyHead}",
+                    attempt, protectedUrl, body.Length,
+                    body.Contains("dest-url", StringComparison.OrdinalIgnoreCase),
+                    body.Contains("btn-proceed", StringComparison.OrdinalIgnoreCase),
+                    body.Contains("cf-turnstile", StringComparison.OrdinalIgnoreCase)
+                        || body.Contains("data-sitekey", StringComparison.OrdinalIgnoreCase),
+                    token is { Length: > 0 },
+                    Truncate(body, 240).Replace('\n', ' ').Replace('\r', ' '));
             }
             catch (TaskCanceledException) when (!ct.IsCancellationRequested)
             {
@@ -185,6 +204,9 @@ public sealed class DlProtectResolver : ILinkResolver
         }
         catch { return null; }
     }
+
+    private static string Truncate(string s, int max)
+        => s.Length <= max ? s : s.Substring(0, max);
 
     private static string GuessHoster(string url)
     {

@@ -168,6 +168,10 @@
         finally { _sending = false; StateHasChanged(); }
     }
 
+    // Read the server's BestVariantPicker result via BestLinkId rather than
+    // re-ranking on the client. Keeps the modal's preselection identical to
+    // /api/catalog/lookup's inline SEND target, the bulk-send picker, and
+    // the Telegram /find buttons.
     private void ApplyInitialSelection(TitleDetail title)
     {
         _selectedLinkIds.Clear();
@@ -176,20 +180,12 @@
         {
             foreach (var ep in episodes)
             {
-                var bestForEp = (ep.Links ?? new())
-                    .OrderBy(l => HostRank(l.Host))
-                    .ThenByDescending(l => l.SizeBytes ?? 0)
-                    .FirstOrDefault();
-                if (bestForEp is not null) _selectedLinkIds.Add(bestForEp.Id);
+                if (ep.BestLinkId is int eid) _selectedLinkIds.Add(eid);
             }
         }
-        else
+        else if (title.BestLinkId is int tid)
         {
-            var bestTitle = (title.Links ?? new())
-                .OrderBy(l => HostRank(l.Host))
-                .ThenByDescending(l => l.SizeBytes ?? 0)
-                .FirstOrDefault();
-            if (bestTitle is not null) _selectedLinkIds.Add(bestTitle.Id);
+            _selectedLinkIds.Add(tid);
         }
     }
 

@@ -307,6 +307,9 @@
         }
     }
 
+    // See Inbox.razor.ResolveMissingLinkIds — same single-source-of-truth
+    // principle: read the server-side BestVariantPicker result via
+    // BestLinkId on TitleDetail / EpisodeDto and never re-rank on the client.
     private static List<int> ResolveMissingLinkIds(TitleDetail title, HashSet<(int s, int e)> owned)
     {
         var ids = new List<int>();
@@ -319,20 +322,12 @@
                     ? owned.Any(o => o.s == ep.SeasonNumber)
                     : owned.Contains((ep.SeasonNumber, ep.EpisodeNumber));
                 if (isOwned) continue;
-                var best = (ep.Links ?? new())
-                    .OrderBy(l => TitleModalHost.HostRank(l.Host))
-                    .ThenByDescending(l => l.SizeBytes ?? 0)
-                    .FirstOrDefault();
-                if (best is not null) ids.Add(best.Id);
+                if (ep.BestLinkId is int eid) ids.Add(eid);
             }
         }
-        else
+        else if (title.BestLinkId is int tid)
         {
-            var best = (title.Links ?? new())
-                .OrderBy(l => TitleModalHost.HostRank(l.Host))
-                .ThenByDescending(l => l.SizeBytes ?? 0)
-                .FirstOrDefault();
-            if (best is not null) ids.Add(best.Id);
+            ids.Add(tid);
         }
         return ids;
     }

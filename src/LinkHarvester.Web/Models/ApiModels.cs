@@ -120,12 +120,18 @@ public sealed record SearchPage(int Total, int Page, int PageSize, List<SearchHi
 
 public sealed record CatalogLink(int Id, string Url, string Host, string? Quality, string? AudioLangs, string? SubLangs, long? SizeBytes,
     string Source = "catalog", int? HarvesterArticleId = null);
-public sealed record CatalogEpisode(int Id, int SeasonNumber, int EpisodeNumber, string? EpisodeName, bool IsFullSeason, List<CatalogLink> Links);
+// BestLinkId is the result of running BestVariantPicker server-side
+// against the user's settings (HosterPriority, QualityPreference,
+// AudioPreference). It's null only when the title/episode has no links
+// at all. The client should never re-rank — every "best variant"
+// decision in the WASM UI reads this field.
+public sealed record CatalogEpisode(int Id, int SeasonNumber, int EpisodeNumber, string? EpisodeName, bool IsFullSeason, List<CatalogLink> Links, int? BestLinkId = null);
 public sealed record TitleDetail(
     int Id, string Title, string? OriginalTitle, string Category, string? Poster,
     int? Year, double? Rating, int? Runtime, string? Overview, List<string> Genres,
     string? OriginalLanguage, string? ImdbId, int? TmdbId,
-    bool MetadataUncertain, List<CatalogLink> Links, List<CatalogEpisode> Episodes);
+    bool MetadataUncertain, List<CatalogLink> Links, List<CatalogEpisode> Episodes,
+    int? BestLinkId = null);
 
 public sealed record IngestionStatus(string State, string? Description, IngestProgress Progress,
     string? Error, DateTimeOffset? StartedAt, DateTimeOffset? FinishedAt);

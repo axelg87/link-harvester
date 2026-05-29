@@ -75,40 +75,47 @@ public sealed class DiscoveryRefreshService : BackgroundService
     {
         var snap = _settings.Current;
         var summary = new DiscoveryRefreshSummary();
+        var totalSw = System.Diagnostics.Stopwatch.StartNew();
+        _log.LogInformation(
+            "discovery refresh started. tmdb={TmdbSet} trakt={TraktSet} plex={PlexSet}",
+            !string.IsNullOrEmpty(snap.TmdbApiKey),
+            !string.IsNullOrEmpty(snap.TraktClientId),
+            !string.IsNullOrEmpty(snap.PlexToken));
 
         if (!string.IsNullOrEmpty(snap.TmdbApiKey))
         {
-            await RefreshTmdbAsync("tmdb_top_rated_movie", "TMDB Top Rated", "top_rated", false, snap.TmdbApiKey, summary, ct);
-            await RefreshTmdbAsync("tmdb_popular_movie", "TMDB Popular", "popular", false, snap.TmdbApiKey, summary, ct);
-            await RefreshTmdbAsync("tmdb_top_rated_tv", "TMDB Top Rated TV", "top_rated", true, snap.TmdbApiKey, summary, ct);
-            await RefreshTmdbAsync("tmdb_popular_tv", "TMDB Popular TV", "popular", true, snap.TmdbApiKey, summary, ct);
+            await RunSourceAsync("tmdb_top_rated_movie", () => RefreshTmdbAsync("tmdb_top_rated_movie", "TMDB Top Rated", "top_rated", false, snap.TmdbApiKey, summary, ct));
+            await RunSourceAsync("tmdb_popular_movie", () => RefreshTmdbAsync("tmdb_popular_movie", "TMDB Popular", "popular", false, snap.TmdbApiKey, summary, ct));
+            await RunSourceAsync("tmdb_top_rated_tv", () => RefreshTmdbAsync("tmdb_top_rated_tv", "TMDB Top Rated TV", "top_rated", true, snap.TmdbApiKey, summary, ct));
+            await RunSourceAsync("tmdb_popular_tv", () => RefreshTmdbAsync("tmdb_popular_tv", "TMDB Popular TV", "popular", true, snap.TmdbApiKey, summary, ct));
+        }
+        else
+        {
+            _log.LogInformation("discovery source skipped: tmdb (no api key)");
         }
 
         if (!string.IsNullOrEmpty(snap.TraktClientId))
         {
-            await RefreshTraktAsync("trakt_trending_movies", "Trakt Trending", "movies", snap.TraktClientId, summary, ct);
-            await RefreshTraktAsync("trakt_trending_shows", "Trakt Trending TV", "shows", snap.TraktClientId, summary, ct);
+            await RunSourceAsync("trakt_trending_movies", () => RefreshTraktAsync("trakt_trending_movies", "Trakt Trending", "movies", snap.TraktClientId, summary, ct));
+            await RunSourceAsync("trakt_trending_shows", () => RefreshTraktAsync("trakt_trending_shows", "Trakt Trending TV", "shows", snap.TraktClientId, summary, ct));
+        }
+        else
+        {
+            _log.LogInformation("discovery source skipped: trakt (no client id)");
         }
 
-        await RefreshLetterboxdAsync(summary, ct);
+        await RunSourceAsync("letterboxd_popular_week", () => RefreshLetterboxdAsync(summary, ct));
 
-        // Plex Discover — best effort. Public watchlist endpoint may or may
-        // not return data with the user's existing token scope; if it
-        // doesn't, we drop the source silently rather than fail the run.
         if (!string.IsNullOrEmpty(snap.PlexToken))
         {
-            try
-            {
-                await RefreshPlexAsync(snap.PlexToken, summary, ct);
-            }
-            catch (Exception ex)
-            {
-                _log.LogInformation(ex, "plex discover skipped (likely scope issue)");
-            }
+            try { await RunSourceAsync("plex_most_watchlisted", () => RefreshPlexAsync(snap.PlexToken, summary, ct)); }
+            catch (Exception ex) { _log.LogInformation(ex, "plex discover skipped (likely scope issue)"); }
+        }
+        else
+        {
+            _log.LogInformation("discovery source skipped: plex (no token)");
         }
 
-        // Drop stale rows from sources that didn't refresh this run (older
-        // than 48h) so we don't show ghost entries from a defunct source.
         var staleCutoff = DateTimeOffset.UtcNow - TimeSpan.FromHours(48);
         await using (var db = await _factory.CreateDbContextAsync(ct))
         {
@@ -123,10 +130,30 @@ public sealed class DiscoveryRefreshService : BackgroundService
             }
         }
 
+        totalSw.Stop();
         _log.LogInformation(
-            "discovery refresh complete: tmdb={Tmdb} trakt={Trakt} letterboxd={Lb} plex={Plex} pruned={Pruned}",
-            summary.TmdbInserted, summary.TraktInserted, summary.LetterboxdInserted, summary.PlexInserted, summary.Pruned);
+            "discovery refresh complete in {Elapsed}: tmdb={Tmdb} trakt={Trakt} letterboxd={Lb} plex={Plex} pruned={Pruned}",
+            totalSw.Elapsed, summary.TmdbInserted, summary.TraktInserted, summary.LetterboxdInserted, summary.PlexInserted, summary.Pruned);
         return summary;
+    }
+
+    /// <summary>Wraps each per-source refresh with a start/end log + duration
+    /// so a stalled refresh shows exactly which source it died inside.</summary>
+    private async Task RunSourceAsync(string source, Func<Task> body)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        _log.LogInformation("discovery source {Source} starting", source);
+        try
+        {
+            await body();
+            sw.Stop();
+            _log.LogInformation("discovery source {Source} finished in {Elapsed}", source, sw.Elapsed);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _log.LogWarning(ex, "discovery source {Source} threw after {Elapsed}", source, sw.Elapsed);
+        }
     }
 
     private async Task RefreshTmdbAsync(string source, string label, string list, bool isSeries, string apiKey,
