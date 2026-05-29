@@ -13,5 +13,6 @@ builder.Services.AddScoped(sp =>
     return http;
 });
 builder.Services.AddScoped<HarvesterApi>();
+builder.Services.AddScoped<BrowserCache>();
 
 await builder.Build().RunAsync();

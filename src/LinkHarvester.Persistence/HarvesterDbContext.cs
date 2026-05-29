@@ -149,6 +149,13 @@ public class HarvesterDbContext : DbContext
             e.HasIndex(l => l.LinkSource);
             e.HasIndex(l => l.NormalizedHost);
             e.HasIndex(l => l.QualityName);
+            // Composite that backs /api/catalog/search's 4-way filter
+            // (t.Links.Any(l => l.NormalizedHost == ... && l.QualityName == ...
+            //                  && l.AudioLangs.Contains(...) && l.SizeBytes >= ...)).
+            // Without it SQLite must re-scan every link row per title under
+            // the EXISTS subquery — for series with hundreds of links this
+            // is the dominant cost when any catalog filter is engaged.
+            e.HasIndex(l => new { l.TitleId, l.NormalizedHost, l.QualityName });
             e.Property(l => l.LinkUrl).HasMaxLength(2048);
             e.Property(l => l.LinkSource).HasMaxLength(32);
             e.Property(l => l.HostName).HasMaxLength(64);

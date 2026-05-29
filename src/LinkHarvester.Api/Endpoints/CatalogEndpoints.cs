@@ -93,7 +93,7 @@ public static class CatalogEndpoints
                     BestLink: bestDto);
             }).ToList();
             return Results.Ok(new LookupResultDto(hits));
-        });
+        }).CachePrivate(seconds: 60);
 
         // ── Browse ───────────────────────────────────────────────────────────
         grp.MapGet("/search", async (
@@ -442,7 +442,7 @@ public static class CatalogEndpoints
                     audio.Select(x => new FacetEntry(x.Key, x.Count)).ToList());
             }, ct: ct);
             return Results.Ok(result);
-        });
+        }).CachePrivate(seconds: 300);
 
         grp.MapGet("/genres", async (HarvesterDbContext db, CatalogAggregatesCache cache, CancellationToken ct) =>
         {
@@ -467,7 +467,7 @@ public static class CatalogEndpoints
                     .OrderByDescending(x => x.Count).Take(40).ToList();
             }, ct: ct);
             return Results.Ok(result);
-        });
+        }).CachePrivate(seconds: 300);
 
         // ── Send specific link(s) to DSM right from the catalog ─────────────
         grp.MapPost("/links/send", async (
@@ -626,7 +626,7 @@ public static class CatalogEndpoints
                 enrichmentFailedTransient = snapshot.EnrichmentFailedTransient,
                 enrichmentRunState = tmdb.State
             });
-        });
+        }).CachePrivate(seconds: 30);
 
         // Reset enrichment failures so the background enricher will retry
         // them on its next batch. With ?onlyLockErrors=true (the default),
