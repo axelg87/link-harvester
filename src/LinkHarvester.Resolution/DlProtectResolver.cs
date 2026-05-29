@@ -136,20 +136,29 @@ public sealed class DlProtectResolver : ILinkResolver
                     return new ResolutionOutcome(ResolutionAttemptResult.Success, links, null, capCalls, capCost);
                 }
 
-                // Structured diagnostic. PR #35's first round-trip showed
-                // hasDestUrlAnchor=True every time — the anchor exists but
-                // the href didn't satisfy IsFinalHosterUrl. This PR's
-                // ExtractFinalUrls also walks data-href/data-link/data-url
-                // and runs a body-text regex; if even that finds nothing,
-                // the diagnostic now includes the outerHTML of every
-                // a.dest-url element so we can see exactly which attribute
-                // dl-protect put the URL on this time.
+                // Structured diagnostic. PR #36 showed the next layer of the
+                // mystery: hasDestUrlAnchor=True yet destAnchorOuterHtml=<none>
+                // — the literal string "dest-url" is in the body, but it's
+                // not on an <a class="dest-url"> element. And Layer 3
+                // (body-text regex for known hoster URLs) found nothing
+                // either. So either the POST is being silently rejected
+                // (we get the GET page back), or the URL is delivered via
+                // a JS-driven XHR after page-load. Two extra dumps to tell
+                // those apart on the next failure:
+                //   destUrlContexts — every 240-char window around the
+                //     substring "dest-url" (so we can see whether it's in
+                //     a script, on a button, in a comment, etc.).
+                //   bodyTail — the LAST 800 chars of the body (the head
+                //     is usually boilerplate; the action is at the bottom).
+                // bodyHead is also bumped from 240 → 800 chars.
                 var destAnchorDump = DumpDestAnchors(body);
+                var destUrlContexts = ExtractKeywordContexts(body, "dest-url", windowChars: 120, maxHits: 4);
                 _log.LogWarning(
                     "dl-protect POST yielded no hoster URL. attempt={Attempt} url={Url} bodyLen={BodyLen} " +
                     "hasDestUrlAnchor={HasDest} hasBtnProceedAnchor={HasBtn} " +
                     "hasTurnstileMarkup={HasTurnstile} tokenSent={TokenSent} " +
-                    "destAnchorOuterHtml={DestAnchorHtml} bodyHead={BodyHead}",
+                    "destAnchorOuterHtml={DestAnchorHtml} destUrlContexts={DestUrlContexts} " +
+                    "bodyHead={BodyHead} bodyTail={BodyTail}",
                     attempt, protectedUrl, body.Length,
                     body.Contains("dest-url", StringComparison.OrdinalIgnoreCase),
                     body.Contains("btn-proceed", StringComparison.OrdinalIgnoreCase),
@@ -157,7 +166,9 @@ public sealed class DlProtectResolver : ILinkResolver
                         || body.Contains("data-sitekey", StringComparison.OrdinalIgnoreCase),
                     token is { Length: > 0 },
                     destAnchorDump,
-                    Truncate(body, 240).Replace('\n', ' ').Replace('\r', ' '));
+                    destUrlContexts,
+                    Truncate(body, 800).Replace('\n', ' ').Replace('\r', ' '),
+                    TruncateTail(body, 800).Replace('\n', ' ').Replace('\r', ' '));
             }
             catch (TaskCanceledException) when (!ct.IsCancellationRequested)
             {
@@ -259,6 +270,34 @@ public sealed class DlProtectResolver : ILinkResolver
 
     private static string Truncate(string s, int max)
         => s.Length <= max ? s : s.Substring(0, max);
+
+    private static string TruncateTail(string s, int max)
+        => s.Length <= max ? s : s.Substring(s.Length - max);
+
+    /// <summary>
+    /// Find every occurrence of <paramref name="needle"/> in <paramref name="haystack"/>
+    /// and emit a <paramref name="windowChars"/>-wide slice on either side.
+    /// Joined with " ┊ ", capped at <paramref name="maxHits"/>. Used to see
+    /// whether a substring (e.g. "dest-url", "1fichier") lives in inline
+    /// JS, a class name, a comment, etc., without dumping the full body.
+    /// </summary>
+    private static string ExtractKeywordContexts(string haystack, string needle, int windowChars, int maxHits)
+    {
+        if (string.IsNullOrEmpty(haystack) || string.IsNullOrEmpty(needle)) return "<empty>";
+        var hits = new List<string>(maxHits);
+        var idx = 0;
+        while (hits.Count < maxHits)
+        {
+            var found = haystack.IndexOf(needle, idx, StringComparison.OrdinalIgnoreCase);
+            if (found < 0) break;
+            var start = Math.Max(0, found - windowChars);
+            var end = Math.Min(haystack.Length, found + needle.Length + windowChars);
+            hits.Add(haystack.Substring(start, end - start)
+                .Replace('\n', ' ').Replace('\r', ' '));
+            idx = found + needle.Length;
+        }
+        return hits.Count == 0 ? "<not-found>" : string.Join(" ┊ ", hits);
+    }
 
     /// <summary>
     /// Returns the outer HTML of every <c>a.dest-url</c> / <c>a.btn-proceed</c>

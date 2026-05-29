@@ -197,6 +197,7 @@ app.MapBackfillEndpoints();
 app.MapSendHistoryEndpoints();
 app.MapFollowingEndpoints();
 app.MapDiscoveryEndpoints();
+app.MapDiagnosticEndpoints();
 
 app.MapFallbackToFile("index.html");
 
