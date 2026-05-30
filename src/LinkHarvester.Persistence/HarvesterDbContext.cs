@@ -299,11 +299,15 @@ public class HarvesterDbContext : DbContext
 
         b.Entity<CatalogCardLinkFacetEntity>(e =>
         {
-            // Three indices cover the four filter dimensions. Audio is a LIKE
-            // pattern and stays unindexed — the host+quality narrowing leaves
-            // a tiny result set for the LIKE to run on.
+            // Indices cover the four filter dimensions. The host+quality+card
+            // composite plus the (NormalizedHost,CardId) and (QualityName,CardId)
+            // covers the search EXISTS subquery. The (AudioLangs,CardId) index
+            // is what makes the /facets GROUP BY AudioLangs over the full 2.3M
+            // facet rows finish in ~1s instead of ~20s — at write time it's a
+            // single extra entry per row, well worth it.
             e.HasIndex(f => new { f.NormalizedHost, f.CardId });
             e.HasIndex(f => new { f.QualityName, f.CardId });
+            e.HasIndex(f => new { f.AudioLangs, f.CardId });
             e.HasIndex(f => new { f.CardId, f.NormalizedHost, f.QualityName });
             e.Property(f => f.NormalizedHost).HasMaxLength(64);
             e.Property(f => f.QualityName).HasMaxLength(64);
