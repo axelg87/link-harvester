@@ -187,12 +187,21 @@ ON CONFLICT(TitleId) DO UPDATE SET
                 c.Kind,
                 c.SeasonNumber,
                 c.BetterAvailable ? 1 : 0,
-                c.UpdatedAt.ToUnixTimeMilliseconds(),
+                EncodeDateTimeOffsetBinary(c.UpdatedAt),
                 c.ChosenArticleJson,
                 c.OtherVariantsJson,
                 c.Visible ? 1 : 0,
             }!, ct);
     }
+
+    // Mirrors EFCore's DateTimeOffsetToBinaryConverter (see EFCore source).
+    // Required because we INSERT raw values via ExecuteSqlRawAsync, which
+    // bypasses the value-converter wired up in OnModelCreating. Writing the
+    // Unix-ms representation here instead produced low-11-bit garbage that
+    // EF's reader decoded as an offset outside +/-14h, throwing on every
+    // InboxCards row.
+    private static long EncodeDateTimeOffsetBinary(DateTimeOffset v) =>
+        (v.Ticks / 1000) << 11 | ((long)v.Offset.TotalMinutes & 0x7FF);
 
     private static InboxArticleDto ToArticleDto(ArticleEntity a) => new(
         Id: a.Id,
