@@ -1,6 +1,7 @@
 using System.Text.Json;
 using LinkHarvester.Core;
 using LinkHarvester.Persistence;
+using LinkHarvester.Persistence.Cards;
 using LinkHarvester.Persistence.Catalog;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -25,6 +26,7 @@ public sealed class ScanPipeline
     private readonly IQualityScorer _scorer;
     private readonly HarvesterCatalogPromoter _catalogPromoter;
     private readonly FollowingDetectionService _followingDetection;
+    private readonly ICardKeeper _cards;
     private readonly HarvesterOptions _opts;
     private readonly ILogger<ScanPipeline> _log;
 
@@ -33,6 +35,7 @@ public sealed class ScanPipeline
                          IQualityScorer scorer,
                          HarvesterCatalogPromoter catalogPromoter,
                          FollowingDetectionService followingDetection,
+                         ICardKeeper cards,
                          IOptions<HarvesterOptions> opts,
                          ILogger<ScanPipeline> log)
     {
@@ -41,6 +44,7 @@ public sealed class ScanPipeline
         _scorer = scorer;
         _catalogPromoter = catalogPromoter;
         _followingDetection = followingDetection;
+        _cards = cards;
         _opts = opts.Value;
         _log = log;
     }
@@ -205,6 +209,12 @@ public sealed class ScanPipeline
         if (existing is null)
             db.Articles.Add(article);
         await db.SaveChangesAsync(ct);
+
+        // Refresh the inbox card after every article. The keeper computes
+        // whether this title's visible-articles set is non-empty and writes
+        // (or hides) the card row accordingly — that's the only place the
+        // chosen-vs-other variants split is decided.
+        await _cards.UpsertInboxCardAsync(db, title.Id, ct);
 
         try
         {

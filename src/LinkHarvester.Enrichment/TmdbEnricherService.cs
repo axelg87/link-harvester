@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using LinkHarvester.Core;
 using LinkHarvester.Persistence;
+using LinkHarvester.Persistence.Cards;
 using LinkHarvester.Persistence.Catalog;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -40,6 +41,7 @@ public sealed class TmdbEnricherService : BackgroundService
     private readonly TmdbClient _tmdb;
     private readonly TmdbStatusTracker _tracker;
     private readonly ICatalogIngestionStatus _ingestionStatus;
+    private readonly ICardKeeper _cards;
     private readonly ILogger<TmdbEnricherService> _log;
 
     /// <summary>
@@ -54,6 +56,7 @@ public sealed class TmdbEnricherService : BackgroundService
                                 TmdbClient tmdb,
                                 TmdbStatusTracker tracker,
                                 ICatalogIngestionStatus ingestionStatus,
+                                ICardKeeper cards,
                                 ILogger<TmdbEnricherService> log)
     {
         _factory = factory;
@@ -61,6 +64,7 @@ public sealed class TmdbEnricherService : BackgroundService
         _tmdb = tmdb;
         _tracker = tracker;
         _ingestionStatus = ingestionStatus;
+        _cards = cards;
         _log = log;
     }
 
@@ -420,6 +424,9 @@ public sealed class TmdbEnricherService : BackgroundService
             title.ImdbId ??= details.ImdbId;
         }
         await db.SaveChangesAsync(ct);
+        // Successful enrichment changed Year / Rating / Genres / Overview /
+        // Popularity / Poster — every field the catalog card surfaces.
+        await _cards.UpsertCatalogCardAsync(db, item.TitleId, ct);
         _tracker.IncrementEnriched();
     }
 
@@ -434,6 +441,9 @@ public sealed class TmdbEnricherService : BackgroundService
         meta.LastEnrichedAt = DateTimeOffset.UtcNow;
         if (meta.Id == 0) db.CatalogTitleMetadata.Add(meta);
         await db.SaveChangesAsync(ct);
+        // EnrichmentSource flip ("pending"/"failed") shows in the
+        // hasMetadata facet, so the card still needs a refresh.
+        await _cards.UpsertCatalogCardAsync(db, item.TitleId, ct);
         _tracker.IncrementFailed();
     }
 

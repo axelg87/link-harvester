@@ -5,6 +5,7 @@ using LinkHarvester.Api.Maintenance;
 using LinkHarvester.Core;
 using LinkHarvester.Enrichment;
 using LinkHarvester.Persistence;
+using LinkHarvester.Persistence.Cards;
 using LinkHarvester.Persistence.Catalog;
 using LinkHarvester.Synology;
 using LinkHarvester.Worker;
@@ -98,6 +99,7 @@ public static class CatalogEndpoints
         // ── Browse ───────────────────────────────────────────────────────────
         grp.MapGet("/search", async (
             HarvesterDbContext db,
+            CardSyncState cards,
             [FromQuery] string? q,
             [FromQuery] string? category,
             [FromQuery] string? hosts,         // csv
@@ -122,6 +124,21 @@ public static class CatalogEndpoints
             page = Math.Max(1, page);
             pageSize = Math.Clamp(pageSize, 1, 100);
             var offset = (page - 1) * pageSize;
+
+            // Fast path: read model populated. Query CatalogCards flat,
+            // with EXISTS semi-joins onto the genre / link-facet companion
+            // tables. No correlated subqueries, no JSON parsing in WHERE,
+            // no metadata JOIN per row — the cards already carry every
+            // column the DTO needs.
+            if (cards.IsReady)
+            {
+                return await SearchFromCardsAsync(db, q, category, hosts, qualities, audio, genres,
+                    yearMin, yearMax, ratingMin, runtimeMin, runtimeMax, sizeMinBytes, sizeMaxBytes,
+                    originalLanguage, hasMetadata, includeHidden, sort, page, pageSize, offset, ct);
+            }
+
+            // Cold path: cards not built yet. Legacy query carries us until
+            // the startup backfill completes.
 
             // 1) Resolve candidate title ids from FTS (if q provided) or from titles directly.
             // FTS5 isn't reachable through a single LINQ expression, so when q is set we
@@ -650,6 +667,119 @@ public static class CatalogEndpoints
         });
 
         return routes;
+    }
+
+    /// <summary>
+    /// Fast-path catalog search reading from the CatalogCards read model
+    /// plus its two companion tables (CatalogCardGenres, CatalogCardLinkFacets).
+    /// Every WHERE clause hits an index; the previous cold path crossed
+    /// CatalogTitles × CatalogTitleMetadata × CatalogLinks with a JSON LIKE
+    /// over genres and two correlated subqueries per result row.
+    ///
+    /// Pagination still uses offset+count to preserve the existing "page X
+    /// of Y" UI, but the COUNT(*) now runs against the indexed CatalogCards
+    /// rather than a multi-join projection — orders of magnitude cheaper.
+    /// </summary>
+    private static async Task<IResult> SearchFromCardsAsync(
+        HarvesterDbContext db,
+        string? q, string? category, string? hosts, string? qualities, string? audio, string? genres,
+        int? yearMin, int? yearMax, double? ratingMin, int? runtimeMin, int? runtimeMax,
+        long? sizeMinBytes, long? sizeMaxBytes,
+        string? originalLanguage, bool? hasMetadata, bool? includeHidden,
+        string sort, int page, int pageSize, int offset,
+        CancellationToken ct)
+    {
+        // FTS still lives on CatalogTitles (the shadow rowid matches our
+        // card PK because CatalogCard.TitleId == CatalogTitle.Id by design).
+        List<int>? ftsIds = null;
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var escaped = SanitizeFtsQuery(q);
+            ftsIds = await db.Database.SqlQueryRaw<int>(
+                "SELECT rowid AS Value FROM CatalogTitlesFts WHERE CatalogTitlesFts MATCH {0} LIMIT 5000",
+                escaped).ToListAsync(ct);
+        }
+
+        var query = db.CatalogCards.AsNoTracking().AsQueryable();
+
+        if (!(includeHidden ?? false))
+            query = query.Where(c => !c.IsHidden);
+        if (ftsIds is not null)
+            query = query.Where(c => ftsIds.Contains(c.TitleId));
+        if (!string.IsNullOrWhiteSpace(category))
+            query = query.Where(c => c.CategoryName == category);
+        if (yearMin.HasValue) query = query.Where(c => c.Year >= yearMin);
+        if (yearMax.HasValue) query = query.Where(c => c.Year <= yearMax);
+        if (ratingMin.HasValue) query = query.Where(c => c.Rating >= ratingMin);
+        if (runtimeMin.HasValue) query = query.Where(c => c.Runtime >= runtimeMin);
+        if (runtimeMax.HasValue) query = query.Where(c => c.Runtime <= runtimeMax);
+        if (!string.IsNullOrWhiteSpace(originalLanguage))
+            query = query.Where(c => c.OriginalLanguage == originalLanguage);
+        if (hasMetadata == true)
+            query = query.Where(c => c.HasMetadata);
+
+        // Genre filter: semi-join via the indexed CatalogCardGenres table.
+        // Replaces the previous JSON LIKE that forced a full metadata scan.
+        if (!string.IsNullOrWhiteSpace(genres))
+        {
+            var genreSet = CsvSet(genres).ToList();
+            query = query.Where(c => db.CatalogCardGenres
+                .Any(g => g.CardId == c.TitleId && genreSet.Contains(g.Genre)));
+        }
+
+        // Host/quality/audio/size filter: every link-facet row carries all
+        // four dimensions, so a single EXISTS satisfies the "one link must
+        // match all filters" rule. The composite index
+        // (CardId, NormalizedHost, QualityName) backs the dominant access path.
+        var needLinkFilter = !string.IsNullOrWhiteSpace(hosts)
+                          || !string.IsNullOrWhiteSpace(qualities)
+                          || !string.IsNullOrWhiteSpace(audio)
+                          || sizeMinBytes.HasValue || sizeMaxBytes.HasValue;
+        if (needLinkFilter)
+        {
+            var hostSet = CsvSet(hosts).Select(h => h.ToLowerInvariant()).ToList();
+            var qualSet = CsvSet(qualities).ToList();
+            var audioSet = CsvSet(audio).ToList();
+            query = query.Where(c => db.CatalogCardLinkFacets.Any(f =>
+                f.CardId == c.TitleId
+                && (hostSet.Count == 0 || hostSet.Contains(f.NormalizedHost))
+                && (qualSet.Count == 0 || (f.QualityName != null && qualSet.Contains(f.QualityName)))
+                && (audioSet.Count == 0 || (f.AudioLangs != null && audioSet.Any(a => f.AudioLangs.Contains(a))))
+                && (!sizeMinBytes.HasValue || (f.SizeBytes != null && f.SizeBytes >= sizeMinBytes))
+                && (!sizeMaxBytes.HasValue || (f.SizeBytes != null && f.SizeBytes <= sizeMaxBytes))));
+        }
+
+        var totalCount = await query.CountAsync(ct);
+
+        query = sort switch
+        {
+            "year" => query.OrderByDescending(c => c.Year).ThenBy(c => c.NormalizedTitle),
+            "rating" => query.OrderByDescending(c => c.Rating).ThenBy(c => c.NormalizedTitle),
+            "title" => query.OrderBy(c => c.NormalizedTitle),
+            _ => query.OrderByDescending(c => c.Popularity).ThenBy(c => c.NormalizedTitle)
+        };
+
+        var rows = await query.Skip(offset).Take(pageSize).ToListAsync(ct);
+        var dto = rows.Select(c => new SearchHitDto(
+            Id: c.TitleId,
+            Title: c.TitleName,
+            OriginalTitle: c.OriginalTitle,
+            Category: c.CategoryName,
+            Poster: c.TitlePoster,
+            LinkCount: c.LinkCount,
+            EpisodeCount: c.EpisodeCount,
+            Year: c.Year,
+            Rating: c.Rating,
+            Runtime: c.Runtime,
+            Overview: c.Overview,
+            Genres: SafeGenres(c.GenresJson),
+            OriginalLanguage: c.OriginalLanguage,
+            EnrichmentSource: c.EnrichmentSource,
+            MetadataUncertain: c.MetadataUncertain,
+            SeasonNumber: c.SeasonMin.HasValue && c.SeasonMin == c.SeasonMax ? c.SeasonMin : null
+        )).ToList();
+
+        return Results.Ok(new SearchPageDto(totalCount, page, pageSize, dto));
     }
 
     private static LinkDto MapLink(CatalogLinkEntity l) => new(

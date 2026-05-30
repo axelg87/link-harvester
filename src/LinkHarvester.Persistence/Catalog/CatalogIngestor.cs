@@ -2,6 +2,7 @@ using System.Data;
 using System.Globalization;
 using System.Text.Json;
 using LinkHarvester.Core;
+using LinkHarvester.Persistence.Cards;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -25,14 +26,17 @@ public sealed class CatalogIngestor
 {
     private readonly IDbContextFactory<HarvesterDbContext> _factory;
     private readonly ITitleNormalizer _normalizer;
+    private readonly ICardKeeper _cards;
     private readonly ILogger<CatalogIngestor> _log;
 
     public CatalogIngestor(IDbContextFactory<HarvesterDbContext> factory,
                             ITitleNormalizer normalizer,
+                            ICardKeeper cards,
                             ILogger<CatalogIngestor> log)
     {
         _factory = factory;
         _normalizer = normalizer;
+        _cards = cards;
         _log = log;
     }
 
@@ -218,6 +222,26 @@ public sealed class CatalogIngestor
         {
             db.CatalogImportRuns.Update(run);
             await db.SaveChangesAsync(CancellationToken.None);
+        }
+
+        // Card read-model: after a bulk import the cheapest path to keep
+        // catalog cards consistent is a full rebuild from base — per-row
+        // upserts during ingest would crater the import throughput. The
+        // rebuild touches only catalog cards (not inbox), which is what
+        // the ingest actually changed.
+        if (run.Status == "succeeded")
+        {
+            try
+            {
+                await using var db = await _factory.CreateDbContextAsync(CancellationToken.None);
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                await _cards.RebuildAllAsync(db, CancellationToken.None);
+                _log.LogInformation("rebuilt card read model post-ingest in {Elapsed}", sw.Elapsed);
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "post-ingest card rebuild failed — reconciler will heal on next pass");
+            }
         }
 
         progress?.Report(new IngestProgress(total, titles, episodes, links, failed));

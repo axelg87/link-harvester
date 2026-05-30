@@ -1,5 +1,6 @@
 using LinkHarvester.Core;
 using LinkHarvester.Persistence;
+using LinkHarvester.Persistence.Cards;
 using LinkHarvester.Resolution;
 using LinkHarvester.Worker;
 using Microsoft.Data.Sqlite;
@@ -72,7 +73,7 @@ public class SubmissionServiceDedupeTests
         var dsm = new RecordingDsm();
         var resolver = new ThrowingResolver();
         var settings = new FakeSettings();
-        var svc = new SubmissionService(factory, resolver, dsm, settings, NullLogger<SubmissionService>.Instance);
+        var svc = new SubmissionService(factory, resolver, dsm, settings, new CardKeeper(), NullLogger<SubmissionService>.Instance);
 
         var result = await svc.SendToDsmAsync(article.Id, CancellationToken.None);
 
@@ -149,7 +150,7 @@ public class SubmissionServiceDedupeTests
         var dsm = new RecordingDsm();
         var resolver = new ThrowingResolver();
         var settings = new FakeSettings();
-        var svc = new SubmissionService(factory, resolver, dsm, settings, NullLogger<SubmissionService>.Instance);
+        var svc = new SubmissionService(factory, resolver, dsm, settings, new CardKeeper(), NullLogger<SubmissionService>.Instance);
 
         var result = await svc.SendToDsmAsync(article.Id, CancellationToken.None);
 

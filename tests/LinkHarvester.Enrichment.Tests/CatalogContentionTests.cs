@@ -1,5 +1,6 @@
 using LinkHarvester.Core;
 using LinkHarvester.Persistence;
+using LinkHarvester.Persistence.Cards;
 using LinkHarvester.Persistence.Catalog;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -47,7 +48,7 @@ public class CatalogContentionTests : IAsyncLifetime
         var handler = new FakeTmdbHandler(_ => TimeSpan.FromMilliseconds(20));
         var http = new HttpClient(handler);
         var tmdb = new TmdbClient(http, NullLogger<TmdbClient>.Instance);
-        var sut = new TmdbEnricherService(_factory, settings, tmdb, tracker, ingest, NullLogger<TmdbEnricherService>.Instance);
+        var sut = new TmdbEnricherService(_factory, settings, tmdb, tracker, ingest, new CardKeeper(), NullLogger<TmdbEnricherService>.Instance);
 
         using var hostCts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await sut.StartAsync(hostCts.Token);

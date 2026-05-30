@@ -1,5 +1,6 @@
 using System.Text.Json;
 using LinkHarvester.Core;
+using LinkHarvester.Persistence.Cards;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -8,13 +9,16 @@ namespace LinkHarvester.Persistence.Catalog;
 public sealed class HarvesterCatalogPromoter
 {
     private readonly IDbContextFactory<HarvesterDbContext> _factory;
+    private readonly ICardKeeper _cards;
     private readonly ILogger<HarvesterCatalogPromoter> _log;
 
     public HarvesterCatalogPromoter(
         IDbContextFactory<HarvesterDbContext> factory,
+        ICardKeeper cards,
         ILogger<HarvesterCatalogPromoter> log)
     {
         _factory = factory;
+        _cards = cards;
         _log = log;
     }
 
@@ -132,6 +136,14 @@ public sealed class HarvesterCatalogPromoter
         catalogTitle.EpisodeCount = await db.CatalogEpisodes.CountAsync(e => e.TitleId == catalogTitle.Id, ct);
 
         await db.SaveChangesAsync(ct);
+
+        // Refresh both card surfaces. Promotion changes the catalog title's
+        // link counts and creates/updates Catalog/Genre/LinkFacet rows; it
+        // also flips the Harvester title's CatalogTitleId, which the inbox
+        // card carries so the inbox poster lookup stays accurate.
+        await _cards.UpsertCatalogCardAsync(db, catalogTitle.Id, ct);
+        await _cards.UpsertInboxCardAsync(db, title.Id, ct);
+
         _log.LogInformation("Promoted ZT article {ArticleId} to catalog title {CatalogTitleId}.", articleId, catalogTitle.Id);
         return catalogTitle.Id;
     }

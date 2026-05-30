@@ -1,4 +1,5 @@
 using LinkHarvester.Persistence;
+using LinkHarvester.Persistence.Cards;
 using LinkHarvester.Persistence.Catalog;
 using LinkHarvester.Resolution.HealthCheck;
 using Microsoft.EntityFrameworkCore;
@@ -21,14 +22,17 @@ public sealed class LinkHealthSweepService
 
     private readonly IDbContextFactory<HarvesterDbContext> _factory;
     private readonly ILinkHealthService _health;
+    private readonly ICardKeeper _cards;
     private readonly ILogger<LinkHealthSweepService> _log;
 
     public LinkHealthSweepService(
         IDbContextFactory<HarvesterDbContext> factory,
         ILinkHealthService health,
+        ICardKeeper cards,
         ILogger<LinkHealthSweepService> log)
     {
         _factory = factory;
+        _cards = cards;
         _health = health;
         _log = log;
     }
@@ -177,7 +181,10 @@ public sealed class LinkHealthSweepService
             t.HiddenReason = "all-links-dead";
         }
         if (candidates.Count > 0)
+        {
             await db.SaveChangesAsync(ct);
+            await _cards.UpsertCatalogCardsAsync(db, candidates.Select(t => t.Id).ToList(), ct);
+        }
         return candidates.Count;
     }
 

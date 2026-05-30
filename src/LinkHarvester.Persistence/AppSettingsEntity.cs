@@ -54,4 +54,10 @@ public class AppSettingsEntity
     public long TelegramOwnerChatId { get; set; }
 
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+
+    // Read-model bookkeeping. CardBackfillService stamps this once the
+    // initial rebuild from base tables has finished; the v2 endpoints
+    // refuse to serve until it's set, so a partial backfill can never
+    // surface as a half-populated inbox.
+    public DateTimeOffset? CardsBackfilledAt { get; set; }
 }
