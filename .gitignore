@@ -8,3 +8,6 @@ data/
 playwright-profile/
 .vs/
 .idea/
+
+# Agent-local files (credentials, scratch notes)
+.claude-local/

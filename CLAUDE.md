@@ -7,6 +7,23 @@ The deployed app is **`link-harvester`** in region **`bom`** (Mumbai), reachable
 `https://link-harvester.fly.dev`. The user's primary use is via web/phone, the
 NAS is in the UAE, the user is in France.
 
+## Auth (for hitting deployed `/api/*` endpoints)
+
+Admin login is cookie-based (`harvester.auth`). Credentials live in
+`.claude-local/credentials.env` (gitignored). The agent should source
+this file and POST to `/api/auth/login` to mint a cookie, then reuse
+the cookie jar for subsequent `/api/*` calls — do NOT keep prompting
+the user for the password.
+
+```bash
+source .claude-local/credentials.env
+curl -s -c /tmp/lh.cookies -X POST https://link-harvester.fly.dev/api/auth/login \
+  -H 'content-type: application/json' \
+  -d "{\"username\":\"$HARVESTER_ADMIN_USER\",\"password\":\"$HARVESTER_ADMIN_PASSWORD\"}"
+# Then for protected endpoints:
+curl -s -b /tmp/lh.cookies -X POST https://link-harvester.fly.dev/api/diag/cards/rebuild
+```
+
 Useful commands the agent should reach for on its own without asking:
 
 - `flyctl status -a link-harvester` — machine state, current version
