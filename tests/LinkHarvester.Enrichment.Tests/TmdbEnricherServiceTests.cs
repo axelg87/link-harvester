@@ -1,5 +1,6 @@
 using LinkHarvester.Core;
 using LinkHarvester.Persistence;
+using LinkHarvester.Persistence.Cards;
 using LinkHarvester.Persistence.Catalog;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -47,7 +48,7 @@ public class TmdbEnricherServiceTests : IAsyncLifetime
         var http = new HttpClient(handler);
         var tmdb = new TmdbClient(http, NullLogger<TmdbClient>.Instance);
         var ingest = new FakeIngestionStatus { IsRunning = false };
-        var sut = new TmdbEnricherService(_factory, settings, tmdb, tracker, ingest, NullLogger<TmdbEnricherService>.Instance);
+        var sut = new TmdbEnricherService(_factory, settings, tmdb, tracker, ingest, new CardKeeper(), NullLogger<TmdbEnricherService>.Instance);
 
         using var hostCts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         await sut.StartAsync(hostCts.Token);
@@ -99,7 +100,7 @@ public class TmdbEnricherServiceTests : IAsyncLifetime
         var http = new HttpClient(handler);
         var tmdb = new TmdbClient(http, NullLogger<TmdbClient>.Instance);
         var ingest = new FakeIngestionStatus { IsRunning = false };
-        var sut = new TmdbEnricherService(_factory, settings, tmdb, tracker, ingest, NullLogger<TmdbEnricherService>.Instance);
+        var sut = new TmdbEnricherService(_factory, settings, tmdb, tracker, ingest, new CardKeeper(), NullLogger<TmdbEnricherService>.Instance);
 
         using var hostCts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
         await sut.StartAsync(hostCts.Token);

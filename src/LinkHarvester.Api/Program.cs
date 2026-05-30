@@ -6,6 +6,7 @@ using LinkHarvester.Api.Maintenance;
 using LinkHarvester.Core;
 using LinkHarvester.Enrichment;
 using LinkHarvester.Persistence;
+using LinkHarvester.Persistence.Cards;
 using LinkHarvester.Persistence.Catalog;
 using LinkHarvester.Resolution;
 using LinkHarvester.Sources;
@@ -36,7 +37,8 @@ builder.Services.AddDataProtection()
     .SetApplicationName("LinkHarvester");
 
 builder.Services.AddPooledDbContextFactory<HarvesterDbContext>(opts =>
-    opts.UseSqlite($"Data Source={dbPath}"));
+    opts.UseSqlite($"Data Source={dbPath}")
+        .AddInterceptors(new SqlitePragmaInterceptor()));
 builder.Services.AddScoped<HarvesterDbContext>(sp =>
     sp.GetRequiredService<IDbContextFactory<HarvesterDbContext>>().CreateDbContext());
 
@@ -92,6 +94,7 @@ builder.Services.AddHarvesterSynology();
 builder.Services.AddHarvesterWorker(builder.Configuration);
 builder.Services.AddCatalogIngestion();
 builder.Services.AddCatalogEnrichment();
+builder.Services.AddCardReadModel();
 builder.Services.AddSingleton<HealthCheckService>();
 
 // Catalog aggregates cache. /facets and /genres each cost O(rows) — links
@@ -186,6 +189,17 @@ _ = Task.Run(async () =>
     {
         log.LogError(ex, "background promoter backfill failed");
     }
+});
+
+// Card read-model backfill. First boot after the AddCardReadModel migration
+// has empty card tables — the v2 endpoints stay 503 (and the WASM client
+// falls back to v1) until this finishes. Subsequent boots short-circuit
+// via AppSettings.CardsBackfilledAt.
+_ = Task.Run(async () =>
+{
+    using var bgScope = app.Services.CreateScope();
+    var backfill = bgScope.ServiceProvider.GetRequiredService<CardBackfillService>();
+    await backfill.EnsureBackfilledAsync(CancellationToken.None);
 });
 
 

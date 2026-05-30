@@ -1,3 +1,4 @@
+using LinkHarvester.Persistence.Cards;
 using LinkHarvester.Persistence.Catalog;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -13,6 +14,14 @@ public static class PersistenceServiceCollectionExtensions
         services.AddSingleton<FollowingService>();
         services.AddSingleton<CatalogIngestionRunner>();
         services.AddSingleton<ICatalogIngestionStatus>(sp => sp.GetRequiredService<CatalogIngestionRunner>());
+        return services;
+    }
+
+    public static IServiceCollection AddCardReadModel(this IServiceCollection services)
+    {
+        services.AddSingleton<ICardKeeper, CardKeeper>();
+        services.AddSingleton<CardSyncState>();
+        services.AddSingleton<CardBackfillService>();
         return services;
     }
 }

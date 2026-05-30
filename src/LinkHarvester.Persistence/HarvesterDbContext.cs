@@ -1,3 +1,4 @@
+using LinkHarvester.Persistence.Cards;
 using LinkHarvester.Persistence.Catalog;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
@@ -26,6 +27,13 @@ public class HarvesterDbContext : DbContext
     public DbSet<FollowingDismissalEntity> FollowingDismissals => Set<FollowingDismissalEntity>();
     public DbSet<FollowingDetectionLogEntity> FollowingDetectionLog => Set<FollowingDetectionLogEntity>();
     public DbSet<DiscoveryEntryEntity> DiscoveryEntries => Set<DiscoveryEntryEntity>();
+
+    // Read-model card tables. Owned by ICardKeeper; readers query these
+    // directly with zero joins. See Cards/CardEntities.cs for the data shape.
+    public DbSet<InboxCardEntity> InboxCards => Set<InboxCardEntity>();
+    public DbSet<CatalogCardEntity> CatalogCards => Set<CatalogCardEntity>();
+    public DbSet<CatalogCardGenreEntity> CatalogCardGenres => Set<CatalogCardGenreEntity>();
+    public DbSet<CatalogCardLinkFacetEntity> CatalogCardLinkFacets => Set<CatalogCardLinkFacetEntity>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder cfg)
     {
@@ -244,6 +252,62 @@ public class HarvesterDbContext : DbContext
             e.HasIndex(d => d.FetchedAt);
             e.Property(d => d.Source).HasMaxLength(48);
             e.Property(d => d.Reason).HasMaxLength(128);
+        });
+
+        // ─── Read-model card tables ──────────────────────────────────────────
+        b.Entity<InboxCardEntity>(e =>
+        {
+            e.HasKey(c => c.TitleId);
+            // /api/inbox reads: WHERE Visible = 1 ORDER BY UpdatedAt DESC LIMIT 200.
+            // This composite is the only index that query touches.
+            e.HasIndex(c => new { c.Visible, c.UpdatedAt });
+            e.Property(c => c.DisplayTitle).HasMaxLength(512);
+            e.Property(c => c.Kind).HasMaxLength(16);
+        });
+
+        b.Entity<CatalogCardEntity>(e =>
+        {
+            e.HasKey(c => c.TitleId);
+            // Default sort: ORDER BY Popularity DESC, TitleName.
+            // SQLite index direction defaults to ASC; including IsHidden first
+            // lets the filter use the same index. The popularity DESC scan is
+            // backwards through the B-tree but still O(log n + page).
+            e.HasIndex(c => new { c.IsHidden, c.Popularity });
+            e.HasIndex(c => new { c.IsHidden, c.Year });
+            e.HasIndex(c => new { c.IsHidden, c.Rating });
+            e.HasIndex(c => new { c.IsHidden, c.NormalizedTitle });
+            e.HasIndex(c => c.CategoryName);
+            e.HasIndex(c => c.OriginalLanguage);
+            e.HasIndex(c => c.HasMetadata);
+            e.Property(c => c.TitleName).HasMaxLength(512);
+            e.Property(c => c.OriginalTitle).HasMaxLength(512);
+            e.Property(c => c.NormalizedTitle).HasMaxLength(512);
+            e.Property(c => c.CategoryName).HasMaxLength(64);
+            e.Property(c => c.TitlePoster).HasMaxLength(512);
+            e.Property(c => c.OriginalLanguage).HasMaxLength(16);
+            e.Property(c => c.EnrichmentSource).HasMaxLength(32);
+        });
+
+        b.Entity<CatalogCardGenreEntity>(e =>
+        {
+            e.HasKey(g => new { g.CardId, g.Genre });
+            // The genre filter does a semi-join from cards onto this table;
+            // (Genre, CardId) gives index-only access for that direction.
+            e.HasIndex(g => new { g.Genre, g.CardId });
+            e.Property(g => g.Genre).HasMaxLength(64);
+        });
+
+        b.Entity<CatalogCardLinkFacetEntity>(e =>
+        {
+            // Three indices cover the four filter dimensions. Audio is a LIKE
+            // pattern and stays unindexed — the host+quality narrowing leaves
+            // a tiny result set for the LIKE to run on.
+            e.HasIndex(f => new { f.NormalizedHost, f.CardId });
+            e.HasIndex(f => new { f.QualityName, f.CardId });
+            e.HasIndex(f => new { f.CardId, f.NormalizedHost, f.QualityName });
+            e.Property(f => f.NormalizedHost).HasMaxLength(64);
+            e.Property(f => f.QualityName).HasMaxLength(64);
+            e.Property(f => f.AudioLangs).HasMaxLength(128);
         });
     }
 }

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using LinkHarvester.Core;
 using LinkHarvester.Persistence;
+using LinkHarvester.Persistence.Cards;
 using LinkHarvester.Persistence.Catalog;
 using LinkHarvester.Synology;
 using Microsoft.EntityFrameworkCore;
@@ -27,18 +28,21 @@ public sealed class SubmissionService
     private readonly ILinkResolver _resolver;
     private readonly IDownloadStationClient _dsm;
     private readonly ISettingsService _settings;
+    private readonly ICardKeeper _cards;
     private readonly ILogger<SubmissionService> _log;
 
     public SubmissionService(IDbContextFactory<HarvesterDbContext> factory,
                               ILinkResolver resolver,
                               IDownloadStationClient dsm,
                               ISettingsService settings,
+                              ICardKeeper cards,
                               ILogger<SubmissionService> log)
     {
         _factory = factory;
         _resolver = resolver;
         _dsm = dsm;
         _settings = settings;
+        _cards = cards;
         _log = log;
     }
 
@@ -95,6 +99,7 @@ public sealed class SubmissionService
                 article.Status = ArticleStatus.Resolved;
                 article.ResolvedAt = DateTimeOffset.UtcNow;
                 await db.SaveChangesAsync(ct);
+                await _cards.UpsertInboxCardAsync(db, article.TitleId, ct);
                 return resolvedForHoster;
             }
 
@@ -104,6 +109,9 @@ public sealed class SubmissionService
         article.Status = ArticleStatus.Failed;
         article.FailureReason = $"Could not resolve any hoster ({lastResult})";
         await db.SaveChangesAsync(ct);
+        // Article dropped out of the visible-status set — keeper rebuilds
+        // the card from whatever siblings remain (or hides it).
+        await _cards.UpsertInboxCardAsync(db, article.TitleId, ct);
         return Array.Empty<ResolvedLinkEntity>();
     }
 
@@ -249,6 +257,11 @@ public sealed class SubmissionService
         }
 
         await db.SaveChangesAsync(ct);
+        // Refresh the inbox card after the send terminal state — success
+        // flips Title.Status to Submitted (keeper writes Visible=0); a
+        // failure leaves the title in the inbox but the chosen article's
+        // status updates need to reflect on the card.
+        await _cards.UpsertInboxCardAsync(db, article.TitleId, ct);
         return submission;
     }
 
@@ -271,6 +284,7 @@ public sealed class SubmissionService
         }
 
         await db.SaveChangesAsync(ct);
+        await _cards.UpsertInboxCardAsync(db, article.TitleId, ct);
     }
 
     private List<HosterLinks> OrderByPriority(List<HosterLinks> hosters)

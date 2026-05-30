@@ -1,5 +1,6 @@
 using System.Net;
 using LinkHarvester.Persistence;
+using LinkHarvester.Persistence.Cards;
 using LinkHarvester.Persistence.Catalog;
 using LinkHarvester.Resolution.HealthCheck;
 using LinkHarvester.Resolution.HealthCheck.Hosters;
@@ -60,7 +61,7 @@ public class LinkHealthSweepServiceTests
         var health = new FakeHealthService(url => url.Contains("alive", StringComparison.OrdinalIgnoreCase)
             ? LinkHealth.Alive
             : LinkHealth.Dead);
-        var sut = new LinkHealthSweepService(factory, health, NullLogger<LinkHealthSweepService>.Instance);
+        var sut = new LinkHealthSweepService(factory, health, new CardKeeper(), NullLogger<LinkHealthSweepService>.Instance);
 
         var run = await sut.RunAsync(hosterFilter: null, resume: false, CancellationToken.None);
 
@@ -127,7 +128,7 @@ public class LinkHealthSweepServiceTests
         }
 
         var health = new FakeHealthService(_ => LinkHealth.Alive);
-        var sut = new LinkHealthSweepService(factory, health, NullLogger<LinkHealthSweepService>.Instance);
+        var sut = new LinkHealthSweepService(factory, health, new CardKeeper(), NullLogger<LinkHealthSweepService>.Instance);
 
         var run = await sut.RunAsync(hosterFilter: null, resume: true, CancellationToken.None);
 
