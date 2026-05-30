@@ -337,8 +337,13 @@ WHERE l.TitleId IN ({idsCsv});", ct);
     public async Task RebuildAllAsync(HarvesterDbContext db, CancellationToken ct)
     {
         var totalSw = System.Diagnostics.Stopwatch.StartNew();
+        await RebuildInboxAsync(db, ct);
+        await RebuildCatalogAsync(db, ct);
+        _log.LogInformation("rebuild: total elapsed {Elapsed}", totalSw.Elapsed);
+    }
 
-        // ── Inbox cards ──────────────────────────────────────────────────
+    public async Task RebuildInboxAsync(HarvesterDbContext db, CancellationToken ct)
+    {
         _log.LogInformation("rebuild: inbox phase starting");
         await db.Database.ExecuteSqlRawAsync("DELETE FROM InboxCards", ct);
         var inboxIds = await db.Titles.AsNoTracking()
@@ -368,8 +373,10 @@ WHERE l.TitleId IN ({idsCsv});", ct);
             }
         }
         _log.LogInformation("rebuild: inbox phase done in {Elapsed}", inboxSw.Elapsed);
+    }
 
-        // ── Catalog cards ────────────────────────────────────────────────
+    public async Task RebuildCatalogAsync(HarvesterDbContext db, CancellationToken ct)
+    {
         _log.LogInformation("rebuild: catalog phase starting");
         await db.Database.ExecuteSqlRawAsync("DELETE FROM CatalogCards", ct);
         await db.Database.ExecuteSqlRawAsync("DELETE FROM CatalogCardGenres", ct);
@@ -395,6 +402,5 @@ WHERE l.TitleId IN ({idsCsv});", ct);
                 Math.Min(i + catalogBatch, catalogIds.Count), catalogIds.Count, catalogSw.Elapsed);
         }
         _log.LogInformation("rebuild: catalog phase done in {Elapsed}", catalogSw.Elapsed);
-        _log.LogInformation("rebuild: total elapsed {Elapsed}", totalSw.Elapsed);
     }
 }
