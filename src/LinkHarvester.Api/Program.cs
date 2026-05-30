@@ -162,6 +162,13 @@ using (var scope = app.Services.CreateScope())
     {
         startupLog.LogWarning("marked {Count} orphaned catalog import run(s) as failed (app restarted mid-ingest)", orphanedCount);
     }
+
+    // Probe the card read-model stamp. Cheap (single AppSettings SELECT).
+    // Sets CardSyncState.IsReady=true iff a prior boot stamped
+    // CardsBackfilledAt. Never auto-rebuilds — see CardBackfillService
+    // for the history.
+    var cardProbe = scope.ServiceProvider.GetRequiredService<CardBackfillService>();
+    await cardProbe.EnsureReadyAsync(CancellationToken.None);
 }
 
 // Promote any ZT articles that accumulated as un-promoted while the app
@@ -190,19 +197,6 @@ _ = Task.Run(async () =>
         log.LogError(ex, "background promoter backfill failed");
     }
 });
-
-// Card read-model backfill. First boot after the AddCardReadModel migration
-// has empty card tables — the v2 endpoints stay 503 (and the WASM client
-// falls back to v1) until this finishes. Subsequent boots short-circuit
-// via AppSettings.CardsBackfilledAt.
-_ = Task.Run(async () =>
-{
-    using var bgScope = app.Services.CreateScope();
-    var backfill = bgScope.ServiceProvider.GetRequiredService<CardBackfillService>();
-    await backfill.EnsureBackfilledAsync(CancellationToken.None);
-});
-
-
 
 // Must run before UseStaticFiles / UseBlazorFrameworkFiles to compress
 // the WASM bundle on first download too.
