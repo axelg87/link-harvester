@@ -285,11 +285,14 @@ ON CONFLICT(TitleId) DO UPDATE SET
     IsHidden          = excluded.IsHidden;", ct);
 
         // Refresh genre join rows: wipe + reinsert is simpler than diffing
-        // and the cardinality is tiny (avg ~3 genres per title).
+        // and the cardinality is tiny (avg ~3 genres per title). DISTINCT
+        // because TMDB occasionally serves duplicate genres for the same
+        // title (observed in the wild: ["Drama","Drama"]) — without it the
+        // UNIQUE constraint on (CardId, Genre) fires mid-rebuild.
         await db.Database.ExecuteSqlRawAsync($"DELETE FROM CatalogCardGenres WHERE CardId IN ({idsCsv})", ct);
         await db.Database.ExecuteSqlRawAsync($@"
 INSERT INTO CatalogCardGenres (CardId, Genre)
-SELECT m.TitleId, TRIM(je.value)
+SELECT DISTINCT m.TitleId, TRIM(je.value)
 FROM CatalogTitleMetadata m, json_each(m.GenresJson) je
 WHERE m.TitleId IN ({idsCsv})
   AND json_valid(m.GenresJson)
