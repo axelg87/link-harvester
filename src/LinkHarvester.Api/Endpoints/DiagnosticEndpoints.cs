@@ -1,3 +1,7 @@
+using LinkHarvester.Persistence;
+using LinkHarvester.Persistence.Cards;
+using Microsoft.EntityFrameworkCore;
+
 namespace LinkHarvester.Api.Endpoints;
 
 /// <summary>
@@ -18,6 +22,77 @@ public static class DiagnosticEndpoints
     public static IEndpointRouteBuilder MapDiagnosticEndpoints(this IEndpointRouteBuilder routes)
     {
         var grp = routes.MapGroup("/api/diag").RequireAuthorization();
+
+        // ── Card read-model status ─────────────────────────────────────────
+        // Surface enough state to know whether the v42+ read-model deploy
+        // is healthy: backfill timestamp, in-process readiness flag, row
+        // counts per card table. The reader needs IsReady=true to take
+        // the fast path; if it's false days after deploy, this endpoint
+        // tells us why (probably "CardsBackfilledAt is null and the
+        // background backfill threw").
+        grp.MapGet("/cards/status", async (HarvesterDbContext db, CardSyncState state, CancellationToken ct) =>
+        {
+            var settings = await db.AppSettings.AsNoTracking().FirstOrDefaultAsync(ct);
+            var inboxCount = await db.InboxCards.AsNoTracking().CountAsync(ct);
+            var inboxVisible = await db.InboxCards.AsNoTracking().CountAsync(c => c.Visible, ct);
+            var catalogCount = await db.CatalogCards.AsNoTracking().CountAsync(ct);
+            var genreCount = await db.CatalogCardGenres.AsNoTracking().CountAsync(ct);
+            var facetCount = await db.CatalogCardLinkFacets.AsNoTracking().CountAsync(ct);
+
+            var baseTitleCount = await db.Titles.AsNoTracking().CountAsync(ct);
+            var baseCatalogTitleCount = await db.CatalogTitles.AsNoTracking().CountAsync(ct);
+
+            return Results.Ok(new
+            {
+                isReady = state.IsReady,
+                cardsBackfilledAt = settings?.CardsBackfilledAt,
+                rows = new
+                {
+                    inboxCards = inboxCount,
+                    inboxCardsVisible = inboxVisible,
+                    catalogCards = catalogCount,
+                    catalogCardGenres = genreCount,
+                    catalogCardLinkFacets = facetCount,
+                },
+                baseRows = new
+                {
+                    titles = baseTitleCount,
+                    catalogTitles = baseCatalogTitleCount,
+                }
+            });
+        });
+
+        // Trigger a synchronous rebuild from base. Long-running on a large
+        // catalog (~minutes); the response only returns when done so the
+        // caller learns whether it actually succeeded. After it returns,
+        // the in-process IsReady flag is true.
+        grp.MapPost("/cards/rebuild", async (
+            HarvesterDbContext db, ICardKeeper keeper, CardSyncState state,
+            ILoggerFactory loggers, CancellationToken ct) =>
+        {
+            var log = loggers.CreateLogger("CardsRebuild");
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            log.LogInformation("manual card read-model rebuild starting");
+            try
+            {
+                await keeper.RebuildAllAsync(db, ct);
+                var settings = await db.AppSettings.FirstOrDefaultAsync(ct);
+                if (settings is not null)
+                {
+                    settings.CardsBackfilledAt = DateTimeOffset.UtcNow;
+                    settings.UpdatedAt = DateTimeOffset.UtcNow;
+                    await db.SaveChangesAsync(ct);
+                }
+                state.MarkReady();
+                log.LogInformation("manual card read-model rebuild succeeded in {Elapsed}", sw.Elapsed);
+                return Results.Ok(new { ok = true, elapsed = sw.Elapsed.ToString() });
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex, "manual card read-model rebuild failed after {Elapsed}", sw.Elapsed);
+                return Results.Problem(detail: ex.ToString(), statusCode: 500);
+            }
+        });
 
         grp.MapGet("/dlprotect/fetch", async (string url, CancellationToken ct) =>
         {
