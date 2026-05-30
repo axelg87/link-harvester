@@ -958,6 +958,13 @@ input[type=checkbox] {
 }
 .lh-search-row:last-child { border-bottom: none; }
 .lh-search-row--active { background: var(--lh-surface-3); }
+.lh-search-row--seeall {
+    justify-content: center;
+    color: var(--lh-accent);
+    font-weight: 500;
+    cursor: pointer;
+}
+.lh-search-row--seeall:hover { background: var(--lh-surface-3); }
 .lh-search-poster {
     width: 36px;
     height: 54px;
