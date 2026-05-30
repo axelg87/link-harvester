@@ -5,74 +5,68 @@ using Microsoft.Extensions.Logging;
 namespace LinkHarvester.Persistence.Cards;
 
 /// <summary>
-/// Runs once at startup. Rebuilds all card rows from base tables on first
-/// boot after the read-model migration, then sets
-/// <c>AppSettingsEntity.CardsBackfilledAt</c> so subsequent boots are no-ops.
-/// On every boot it flips <see cref="CardSyncState.IsReady"/> once cards are
-/// proven present, which gates the v2 endpoints.
+/// Runs once at startup. Cheap stamp check — does NOT rebuild cards
+/// automatically. If the prior boot stamped <c>AppSettingsEntity.CardsBackfilledAt</c>,
+/// the in-process <see cref="CardSyncState"/> flips to ready and the
+/// fast-path endpoints activate; otherwise the cold path keeps serving and
+/// an operator must trigger <c>POST /api/diag/cards/rebuild</c> to populate
+/// the read model.
 ///
-/// Runs as a fire-and-forget task to keep Kestrel's health check responsive
-/// during a multi-minute initial backfill of a 100k+ catalog. Until it
-/// completes the v2 endpoints respond 503 and the WASM client falls back to
-/// the legacy reader path.
+/// History: the v42 deploy auto-triggered a background rebuild on first
+/// boot; an early exception (likely DbContext creation or AppSettings
+/// query) threw before the first log line and was swallowed by Task.Run's
+/// unobserved-exception handling. Cards stayed empty, the stamp stayed
+/// null, the fast path stayed dark. Removing the auto-trigger means we
+/// observe + acknowledge the rebuild deliberately the first time, and a
+/// restart can never silently re-launch it.
 /// </summary>
 public sealed class CardBackfillService
 {
     private readonly IDbContextFactory<HarvesterDbContext> _dbf;
-    private readonly ICardKeeper _keeper;
     private readonly CardSyncState _state;
     private readonly ILogger<CardBackfillService> _log;
 
     public CardBackfillService(
         IDbContextFactory<HarvesterDbContext> dbf,
-        ICardKeeper keeper,
         CardSyncState state,
         ILogger<CardBackfillService> log)
     {
         _dbf = dbf;
-        _keeper = keeper;
         _state = state;
         _log = log;
     }
 
-    public async Task EnsureBackfilledAsync(CancellationToken ct)
+    public async Task EnsureReadyAsync(CancellationToken ct)
     {
-        using var db = await _dbf.CreateDbContextAsync(ct);
-        var settings = await db.AppSettings.FirstOrDefaultAsync(ct);
-        if (settings is null)
-        {
-            _log.LogWarning("card backfill skipped: AppSettings row missing");
-            return;
-        }
-
-        // Fast path: backfill stamped in a prior boot → cards are proven to
-        // exist; flip the state to ready and exit. CardKeeper has been
-        // maintaining the tables on every write since.
-        if (settings.CardsBackfilledAt is not null)
-        {
-            _state.MarkReady();
-            _log.LogInformation("card read model ready (backfilled {When:o})",
-                settings.CardsBackfilledAt.Value);
-            return;
-        }
-
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-        _log.LogInformation("card read model: first-boot backfill starting");
+        // Whole body in a single try — early exceptions during DbContext
+        // creation or settings query MUST be logged. The boot caller is
+        // synchronous so it can decide what to do on failure; either way,
+        // the v2 endpoints stay dark until the stamp exists.
         try
         {
-            await _keeper.RebuildAllAsync(db, ct);
+            using var db = await _dbf.CreateDbContextAsync(ct);
+            var settings = await db.AppSettings.AsNoTracking().FirstOrDefaultAsync(ct);
+            if (settings is null)
+            {
+                _log.LogWarning("card sync state: AppSettings row missing; cold path stays active");
+                return;
+            }
 
-            settings.CardsBackfilledAt = DateTimeOffset.UtcNow;
-            settings.UpdatedAt = DateTimeOffset.UtcNow;
-            await db.SaveChangesAsync(ct);
+            if (settings.CardsBackfilledAt is not null)
+            {
+                _state.MarkReady();
+                _log.LogInformation("card read model ready (backfilled {When:o})",
+                    settings.CardsBackfilledAt.Value);
+                return;
+            }
 
-            _state.MarkReady();
-            _log.LogInformation("card read model backfilled in {Elapsed}", stopwatch.Elapsed);
+            _log.LogWarning(
+                "card read model NOT YET BACKFILLED — cold-path serving. " +
+                "POST /api/diag/cards/rebuild to populate.");
         }
         catch (Exception ex)
         {
-            // Don't crash the host — v2 endpoints stay 503 until next attempt.
-            _log.LogError(ex, "card read model backfill failed after {Elapsed}", stopwatch.Elapsed);
+            _log.LogError(ex, "card sync state probe failed");
         }
     }
 }

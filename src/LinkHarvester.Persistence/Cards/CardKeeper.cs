@@ -2,6 +2,8 @@ using System.Text.Json;
 using LinkHarvester.Core;
 using LinkHarvester.Persistence.Catalog;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 // CardKeeper builds SQL with int-id CSV inlined into the IN clause. The ids
 // come from typed int columns we just read from EF — never from user input
@@ -21,6 +23,13 @@ namespace LinkHarvester.Persistence.Cards;
 /// </summary>
 public sealed class CardKeeper : ICardKeeper
 {
+    private readonly ILogger<CardKeeper> _log;
+
+    public CardKeeper(ILogger<CardKeeper>? log = null)
+    {
+        _log = log ?? NullLogger<CardKeeper>.Instance;
+    }
+
     private static readonly JsonSerializerOptions Json = new()
     {
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
@@ -315,33 +324,65 @@ WHERE l.TitleId IN ({idsCsv});", ct);
 
     public async Task RebuildAllAsync(HarvesterDbContext db, CancellationToken ct)
     {
-        // Inbox cards: rebuild from Titles. RemoveCards first so titles that
-        // dropped out of base get cleaned up.
+        var totalSw = System.Diagnostics.Stopwatch.StartNew();
+
+        // ── Inbox cards ──────────────────────────────────────────────────
+        _log.LogInformation("rebuild: inbox phase starting");
         await db.Database.ExecuteSqlRawAsync("DELETE FROM InboxCards", ct);
         var inboxIds = await db.Titles.AsNoTracking()
             .Select(t => t.Id)
             .ToListAsync(ct);
+        _log.LogInformation("rebuild: inbox {Count} titles to upsert", inboxIds.Count);
+
         const int batch = 500;
+        var inboxSw = System.Diagnostics.Stopwatch.StartNew();
         for (var i = 0; i < inboxIds.Count; i += batch)
         {
             var slice = inboxIds.Skip(i).Take(batch).ToList();
+            // Wrap each batch in an explicit transaction. Without this, the
+            // ~500 per-row UpsertInboxCardRowAsync calls inside
+            // UpsertInboxCardsAsync each auto-commit, which under WAL means
+            // ~500 fsync barriers per batch. With one transaction per batch
+            // the barriers collapse to ~1 per batch — ~100× speedup on the
+            // dominant inbox path.
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
             await UpsertInboxCardsAsync(db, slice, ct);
-        }
+            await tx.CommitAsync(ct);
 
-        // Catalog cards: rebuild from CatalogTitles. Bulk SQL paths handle
-        // arbitrary batch size; 2000 keeps the IN clause well under SQLite's
-        // 32k-parameter limit even when each id is multi-digit.
+            if ((i / batch) % 10 == 0 || i + batch >= inboxIds.Count)
+            {
+                _log.LogInformation("rebuild: inbox {Done}/{Total} elapsed {Elapsed}",
+                    Math.Min(i + batch, inboxIds.Count), inboxIds.Count, inboxSw.Elapsed);
+            }
+        }
+        _log.LogInformation("rebuild: inbox phase done in {Elapsed}", inboxSw.Elapsed);
+
+        // ── Catalog cards ────────────────────────────────────────────────
+        _log.LogInformation("rebuild: catalog phase starting");
         await db.Database.ExecuteSqlRawAsync("DELETE FROM CatalogCards", ct);
         await db.Database.ExecuteSqlRawAsync("DELETE FROM CatalogCardGenres", ct);
         await db.Database.ExecuteSqlRawAsync("DELETE FROM CatalogCardLinkFacets", ct);
         var catalogIds = await db.CatalogTitles.AsNoTracking()
             .Select(t => t.Id)
             .ToListAsync(ct);
+        _log.LogInformation("rebuild: catalog {Count} titles to upsert", catalogIds.Count);
+
         const int catalogBatch = 2000;
+        var catalogSw = System.Diagnostics.Stopwatch.StartNew();
         for (var i = 0; i < catalogIds.Count; i += catalogBatch)
         {
             var slice = catalogIds.Skip(i).Take(catalogBatch).ToList();
+            // UpsertCatalogCardsAsync is already bulk INSERT…SELECT (5
+            // statements per batch), so a per-batch transaction collapses
+            // the 5 commits into 1.
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
             await UpsertCatalogCardsAsync(db, slice, ct);
+            await tx.CommitAsync(ct);
+
+            _log.LogInformation("rebuild: catalog {Done}/{Total} elapsed {Elapsed}",
+                Math.Min(i + catalogBatch, catalogIds.Count), catalogIds.Count, catalogSw.Elapsed);
         }
+        _log.LogInformation("rebuild: catalog phase done in {Elapsed}", catalogSw.Elapsed);
+        _log.LogInformation("rebuild: total elapsed {Elapsed}", totalSw.Elapsed);
     }
 }
