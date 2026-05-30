@@ -66,30 +66,58 @@ public static class DiagnosticEndpoints
         // catalog (~minutes); the response only returns when done so the
         // caller learns whether it actually succeeded. After it returns,
         // the in-process IsReady flag is true.
+        //
+        // ?phase=inbox|catalog|all (default all). The "inbox" mode runs in
+        // ~20-30s and fits inside the Fly LB request window, so the
+        // CardsBackfilledAt stamp INSERT after the loop reliably lands and
+        // survives a machine restart. The full rebuild often runs longer
+        // than the LB will hold the connection, which is why the stamp
+        // sometimes failed to persist after a successful catalog rebuild.
         grp.MapPost("/cards/rebuild", async (
             HarvesterDbContext db, ICardKeeper keeper, CardSyncState state,
-            ILoggerFactory loggers, CancellationToken ct) =>
+            ILoggerFactory loggers, string? phase, CancellationToken ct) =>
         {
             var log = loggers.CreateLogger("CardsRebuild");
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            log.LogInformation("manual card read-model rebuild starting");
+            var mode = (phase ?? "all").ToLowerInvariant();
+            log.LogInformation("manual card read-model rebuild starting (phase={Phase})", mode);
             try
             {
-                await keeper.RebuildAllAsync(db, ct);
-                var settings = await db.AppSettings.FirstOrDefaultAsync(ct);
+                switch (mode)
+                {
+                    case "inbox":
+                        await keeper.RebuildInboxAsync(db, ct);
+                        break;
+                    case "catalog":
+                        await keeper.RebuildCatalogAsync(db, ct);
+                        break;
+                    case "all":
+                        await keeper.RebuildAllAsync(db, ct);
+                        break;
+                    default:
+                        return Results.BadRequest(new { error = $"unknown phase '{phase}'; expected inbox|catalog|all" });
+                }
+
+                // Stamp + MarkReady with CancellationToken.None: the request's
+                // ct may already be tripped if the LB closed the connection
+                // mid-rebuild, but the server-side work completed and the
+                // stamp needs to land regardless so IsReady survives a
+                // machine restart. The write is a single-row UPDATE — <50ms
+                // — well inside any sensible deadline.
+                var settings = await db.AppSettings.FirstOrDefaultAsync(CancellationToken.None);
                 if (settings is not null)
                 {
                     settings.CardsBackfilledAt = DateTimeOffset.UtcNow;
                     settings.UpdatedAt = DateTimeOffset.UtcNow;
-                    await db.SaveChangesAsync(ct);
+                    await db.SaveChangesAsync(CancellationToken.None);
                 }
                 state.MarkReady();
-                log.LogInformation("manual card read-model rebuild succeeded in {Elapsed}", sw.Elapsed);
-                return Results.Ok(new { ok = true, elapsed = sw.Elapsed.ToString() });
+                log.LogInformation("manual card read-model rebuild succeeded in {Elapsed} (phase={Phase})", sw.Elapsed, mode);
+                return Results.Ok(new { ok = true, phase = mode, elapsed = sw.Elapsed.ToString() });
             }
             catch (Exception ex)
             {
-                log.LogError(ex, "manual card read-model rebuild failed after {Elapsed}", sw.Elapsed);
+                log.LogError(ex, "manual card read-model rebuild failed after {Elapsed} (phase={Phase})", sw.Elapsed, mode);
                 return Results.Problem(detail: ex.ToString(), statusCode: 500);
             }
         });

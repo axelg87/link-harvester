@@ -187,12 +187,21 @@ ON CONFLICT(TitleId) DO UPDATE SET
                 c.Kind,
                 c.SeasonNumber,
                 c.BetterAvailable ? 1 : 0,
-                c.UpdatedAt.ToUnixTimeMilliseconds(),
+                EncodeDateTimeOffsetBinary(c.UpdatedAt),
                 c.ChosenArticleJson,
                 c.OtherVariantsJson,
                 c.Visible ? 1 : 0,
             }!, ct);
     }
+
+    // Mirrors EFCore's DateTimeOffsetToBinaryConverter (see EFCore source).
+    // Required because we INSERT raw values via ExecuteSqlRawAsync, which
+    // bypasses the value-converter wired up in OnModelCreating. Writing the
+    // Unix-ms representation here instead produced low-11-bit garbage that
+    // EF's reader decoded as an offset outside +/-14h, throwing on every
+    // InboxCards row.
+    private static long EncodeDateTimeOffsetBinary(DateTimeOffset v) =>
+        (v.Ticks / 1000) << 11 | ((long)v.Offset.TotalMinutes & 0x7FF);
 
     private static InboxArticleDto ToArticleDto(ArticleEntity a) => new(
         Id: a.Id,
@@ -328,8 +337,13 @@ WHERE l.TitleId IN ({idsCsv});", ct);
     public async Task RebuildAllAsync(HarvesterDbContext db, CancellationToken ct)
     {
         var totalSw = System.Diagnostics.Stopwatch.StartNew();
+        await RebuildInboxAsync(db, ct);
+        await RebuildCatalogAsync(db, ct);
+        _log.LogInformation("rebuild: total elapsed {Elapsed}", totalSw.Elapsed);
+    }
 
-        // ── Inbox cards ──────────────────────────────────────────────────
+    public async Task RebuildInboxAsync(HarvesterDbContext db, CancellationToken ct)
+    {
         _log.LogInformation("rebuild: inbox phase starting");
         await db.Database.ExecuteSqlRawAsync("DELETE FROM InboxCards", ct);
         var inboxIds = await db.Titles.AsNoTracking()
@@ -359,8 +373,10 @@ WHERE l.TitleId IN ({idsCsv});", ct);
             }
         }
         _log.LogInformation("rebuild: inbox phase done in {Elapsed}", inboxSw.Elapsed);
+    }
 
-        // ── Catalog cards ────────────────────────────────────────────────
+    public async Task RebuildCatalogAsync(HarvesterDbContext db, CancellationToken ct)
+    {
         _log.LogInformation("rebuild: catalog phase starting");
         await db.Database.ExecuteSqlRawAsync("DELETE FROM CatalogCards", ct);
         await db.Database.ExecuteSqlRawAsync("DELETE FROM CatalogCardGenres", ct);
@@ -386,6 +402,5 @@ WHERE l.TitleId IN ({idsCsv});", ct);
                 Math.Min(i + catalogBatch, catalogIds.Count), catalogIds.Count, catalogSw.Elapsed);
         }
         _log.LogInformation("rebuild: catalog phase done in {Elapsed}", catalogSw.Elapsed);
-        _log.LogInformation("rebuild: total elapsed {Elapsed}", totalSw.Elapsed);
     }
 }

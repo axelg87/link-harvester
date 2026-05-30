@@ -34,4 +34,15 @@ public interface ICardKeeper
     /// removed. Safe to invoke against a partially populated card schema.
     /// </summary>
     Task RebuildAllAsync(HarvesterDbContext db, CancellationToken ct);
+
+    /// <summary>
+    /// Inbox-only rebuild — refreshes every <see cref="InboxCardEntity"/>
+    /// row from base. Fast enough (~20–30s on the production dataset) to
+    /// fit inside the Fly LB request window, which the 25-minute full
+    /// rebuild does not.
+    /// </summary>
+    Task RebuildInboxAsync(HarvesterDbContext db, CancellationToken ct);
+
+    /// <summary>Catalog-only counterpart of <see cref="RebuildInboxAsync"/>.</summary>
+    Task RebuildCatalogAsync(HarvesterDbContext db, CancellationToken ct);
 }
