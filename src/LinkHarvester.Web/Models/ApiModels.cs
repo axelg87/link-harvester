@@ -144,7 +144,7 @@ public sealed record LookupLink(int LinkId, string? Quality, string? AudioLangs,
 public sealed record LookupHit(
     int TitleId, string Title, string Category, string? Poster, int? Year,
     int LinkCount, int EpisodeCount, LookupLink? BestLink);
-public sealed record LookupResult(List<LookupHit> Results);
+public sealed record LookupResult(List<LookupHit> Results, int Total = 0);
 
 // ── Following ────────────────────────────────────────────────────────────
 public sealed record FollowingItem(

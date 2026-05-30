@@ -2,6 +2,7 @@
 @using LinkHarvester.Web.Services
 @inject HarvesterApi Api
 @inject IJSRuntime JS
+@inject NavigationManager Nav
 
 <div class="lh-search @(_open ? "lh-search--open" : "")">
     <div class="lh-search-input">
@@ -60,6 +61,12 @@
                         }
                     </div>
                 }
+                @if (_total > _results.Count)
+                {
+                    <div class="lh-search-row lh-search-row--seeall" @onclick="GoToSearchPage">
+                        See all @_total results for "@_query" →
+                    </div>
+                }
             }
         </div>
     }
@@ -79,6 +86,7 @@
     private bool _toastIsError;
     private readonly HashSet<int> _sending = new();
     private List<LookupHit> _results = new();
+    private int _total;
     private CancellationTokenSource? _debounceCts;
     private DotNetObjectReference<TopSearchBar>? _dotnetRef;
 
@@ -155,6 +163,7 @@
         if (_query.Length < 2)
         {
             _results = new();
+            _total = 0;
             _pending = false;
             StateHasChanged();
             return;
@@ -167,11 +176,19 @@
             if (!ct.IsCancellationRequested)
             {
                 _results = res.Results;
+                _total = res.Total;
                 _pending = false;
                 StateHasChanged();
             }
         }
         catch (OperationCanceledException) { }
+    }
+
+    private void GoToSearchPage()
+    {
+        var url = $"/catalog?q={Uri.EscapeDataString(_query)}";
+        _open = false;
+        Nav.NavigateTo(url);
     }
 
     private async Task SendHitAsync(LookupHit hit)

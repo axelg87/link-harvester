@@ -33,14 +33,33 @@ public static class CatalogEndpoints
         {
             limit = Math.Clamp(limit, 1, 25);
             if (string.IsNullOrWhiteSpace(q) || q.Trim().Length < 2)
-                return Results.Ok(new LookupResultDto(new()));
+                return Results.Ok(new LookupResultDto(new(), 0));
 
             var escaped = SanitizeFtsQuery(q);
+
+            // Count matches first so the UI can render "See all N results →"
+            // when there's more than what fits in the dropdown. This is the
+            // affordance that closes the bug where searching "deep" showed
+            // 10 Films and no signal that 137 other matches existed.
+            var total = await db.Database.SqlQueryRaw<int>(
+                "SELECT COUNT(*) AS Value FROM CatalogTitlesFts WHERE CatalogTitlesFts MATCH {0}",
+                escaped).FirstAsync(ct);
+
+            // FTS5 BM25 ranking — lower score = better match. Without ORDER
+            // BY rank, SQLite returns rowids in insertion order (low IDs
+            // first), which biased every dropdown toward old / popular
+            // Films and silently dropped recent additions like series IDs
+            // > 360k. BM25 makes "deep"-the-series tie or beat "Deep
+            // Water"-the-movie on the "deep" query regardless of when each
+            // row was inserted.
+            //
+            // The 4x overshoot leaves headroom for the IsHidden filter
+            // below; with ranking already optimal, no need to over-fetch.
             var ids = await db.Database.SqlQueryRaw<int>(
-                "SELECT rowid AS Value FROM CatalogTitlesFts WHERE CatalogTitlesFts MATCH {0} LIMIT {1}",
+                "SELECT rowid AS Value FROM CatalogTitlesFts WHERE CatalogTitlesFts MATCH {0} ORDER BY rank LIMIT {1}",
                 escaped, limit * 4).ToListAsync(ct);
             if (ids.Count == 0)
-                return Results.Ok(new LookupResultDto(new()));
+                return Results.Ok(new LookupResultDto(new(), total));
 
             // Two-step load. EF's Include().ThenInclude() cartesian-products
             // titles × episodes × episode-links, which for a single TV
@@ -52,14 +71,18 @@ public static class CatalogEndpoints
             // Fix: pick the title IDs first (cheap), then load each title's
             // relations as separate queries via AsSplitQuery. Per-title link
             // counts go to disk individually instead of a join explosion.
+            //
+            // Preserve FTS rank order using the rowid list directly — the
+            // .Where(t => ids.Contains(t.Id)) result is unordered in EF, so
+            // we materialise then re-sort by the index in `ids`.
+            var idRank = ids.Select((id, idx) => (id, idx)).ToDictionary(x => x.id, x => x.idx);
             var pickedIds = await db.CatalogTitles.AsNoTracking()
                 .Where(t => !t.IsHidden && ids.Contains(t.Id))
-                .OrderByDescending(t => t.LinkCount)
-                .Take(limit)
                 .Select(t => t.Id)
                 .ToListAsync(ct);
+            pickedIds = pickedIds.OrderBy(id => idRank[id]).Take(limit).ToList();
             if (pickedIds.Count == 0)
-                return Results.Ok(new LookupResultDto(new()));
+                return Results.Ok(new LookupResultDto(new(), total));
 
             var titles = await db.CatalogTitles.AsNoTracking()
                 .Where(t => pickedIds.Contains(t.Id))
@@ -92,8 +115,8 @@ public static class CatalogEndpoints
                     LinkCount: t.LinkCount,
                     EpisodeCount: t.EpisodeCount,
                     BestLink: bestDto);
-            }).ToList();
-            return Results.Ok(new LookupResultDto(hits));
+            }).OrderBy(h => idRank[h.TitleId]).ToList();
+            return Results.Ok(new LookupResultDto(hits, total));
         }).CachePrivate(seconds: 60);
 
         // ── Browse ───────────────────────────────────────────────────────────
@@ -418,36 +441,48 @@ public static class CatalogEndpoints
         });
 
         // ── Facets (filter chip counts) ──────────────────────────────────────
-        // Both /facets and /genres are full-table scans; the result barely
-        // changes between catalog page loads. Cache for 5 minutes via
-        // CatalogAggregatesCache (single-flight per key) so the catalog
-        // page doesn't kick off four heavy queries on every render.
+        // Read from the card read-model tables (CatalogCards,
+        // CatalogCardLinkFacets, CatalogCardGenres) — every GROUP BY here
+        // hits a covering index. Previously aggregated CatalogLinks (2M+
+        // rows, no usable index for these GROUP BYs), which is why a cold
+        // /facets call took ~22s and left the catalog page's filter strip
+        // empty until the request finally landed.
+        //
+        // Cache for 5 minutes via CatalogAggregatesCache (single-flight per
+        // key) as a defensive layer; with the read-model path it's mostly
+        // redundant since cold cost is sub-second.
         grp.MapGet("/facets", async (HarvesterDbContext db, CatalogAggregatesCache cache, CancellationToken ct) =>
         {
-            var result = await cache.GetOrAddAsync("facets:v1", async token =>
+            var result = await cache.GetOrAddAsync("facets:v2", async token =>
             {
-                // EF Core's SQLite translator dislikes positional record constructors
-                // inside Select; project to anonymous first, then map.
-                var categories = await db.CatalogTitles.AsNoTracking()
-                    .GroupBy(t => t.CategoryName)
+                var categories = await db.CatalogCards.AsNoTracking()
+                    .Where(c => !c.IsHidden)
+                    .GroupBy(c => c.CategoryName)
                     .Select(g => new { Key = g.Key, Count = g.Count() })
                     .ToListAsync(token);
-                var hosts = await db.CatalogLinks.AsNoTracking()
-                    .GroupBy(l => l.HostName)
+                // CatalogCardLinkFacets stores NormalizedHost (lowercased)
+                // rather than the original HostName. That keeps the search
+                // filter matching identity-clean (the search path also
+                // lowercases the incoming filter value), at the cost of
+                // displaying "1fichier" instead of "1Fichier" in the chip.
+                // Acceptable for now — surfacing a separate display column
+                // would mean an entity + migration churn.
+                var hosts = await db.CatalogCardLinkFacets.AsNoTracking()
+                    .GroupBy(f => f.NormalizedHost)
                     .Select(g => new { Key = g.Key, Count = g.Count() })
                     .OrderByDescending(x => x.Count)
                     .Take(40)
                     .ToListAsync(token);
-                var qualities = await db.CatalogLinks.AsNoTracking()
-                    .Where(l => l.QualityName != null)
-                    .GroupBy(l => l.QualityName!)
+                var qualities = await db.CatalogCardLinkFacets.AsNoTracking()
+                    .Where(f => f.QualityName != null)
+                    .GroupBy(f => f.QualityName!)
                     .Select(g => new { Key = g.Key, Count = g.Count() })
                     .OrderByDescending(x => x.Count)
                     .Take(40)
                     .ToListAsync(token);
-                var audio = await db.CatalogLinks.AsNoTracking()
-                    .Where(l => l.AudioLangs != null)
-                    .GroupBy(l => l.AudioLangs!)
+                var audio = await db.CatalogCardLinkFacets.AsNoTracking()
+                    .Where(f => f.AudioLangs != null)
+                    .GroupBy(f => f.AudioLangs!)
                     .Select(g => new { Key = g.Key, Count = g.Count() })
                     .OrderByDescending(x => x.Count)
                     .Take(40)
@@ -463,25 +498,20 @@ public static class CatalogEndpoints
 
         grp.MapGet("/genres", async (HarvesterDbContext db, CatalogAggregatesCache cache, CancellationToken ct) =>
         {
-            var result = await cache.GetOrAddAsync("genres:v1", async token =>
+            var result = await cache.GetOrAddAsync("genres:v2", async token =>
             {
-                var rows = await db.CatalogTitleMetadata.AsNoTracking()
-                    .Where(m => m.GenresJson != "[]")
-                    .Select(m => m.GenresJson)
+                // CatalogCardGenres is pre-flattened: one row per (CardId,
+                // Genre) pair with an index on (Genre, CardId). Counting
+                // distinct cards per genre is a single grouped index scan
+                // instead of streaming every CatalogTitleMetadata.GenresJson
+                // through System.Text.Json on the hot path.
+                var rows = await db.CatalogCardGenres.AsNoTracking()
+                    .GroupBy(g => g.Genre)
+                    .Select(g => new { Key = g.Key, Count = g.Select(x => x.CardId).Distinct().Count() })
+                    .OrderByDescending(x => x.Count)
+                    .Take(40)
                     .ToListAsync(token);
-                var counts = new Dictionary<string, int>(StringComparer.Ordinal);
-                foreach (var json in rows)
-                {
-                    try
-                    {
-                        var arr = JsonSerializer.Deserialize<string[]>(json);
-                        if (arr is null) continue;
-                        foreach (var g in arr) counts[g] = counts.TryGetValue(g, out var n) ? n + 1 : 1;
-                    }
-                    catch { /* malformed JSON row — skip */ }
-                }
-                return counts.Select(kv => new FacetEntry(kv.Key, kv.Value))
-                    .OrderByDescending(x => x.Count).Take(40).ToList();
+                return rows.Select(x => new FacetEntry(x.Key, x.Count)).ToList();
             }, ct: ct);
             return Results.Ok(result);
         }).CachePrivate(seconds: 300);
@@ -849,7 +879,7 @@ public static class CatalogEndpoints
         int TitleId, string Title, string Category, string? Poster,
         int? Year, int LinkCount, int EpisodeCount, LookupLinkDto? BestLink);
 
-    public sealed record LookupResultDto(List<LookupHitDto> Results);
+    public sealed record LookupResultDto(List<LookupHitDto> Results, int Total);
 
     public sealed record FacetsResponse(
         List<FacetEntry> Categories,
